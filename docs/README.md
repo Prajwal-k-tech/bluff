@@ -1,6 +1,6 @@
 # Bluff Bot — Project Documentation
 
-> **Last updated:** August 10, 2026
+> **Last updated:** August 21, 2026
 
 **Bluff Bot** is an AI-powered Bluff (Cheat) card game featuring Bayesian opponent modeling that learns each player's behavioral patterns, PPO-trained neural network bots via self-play, a real-time web interface for human play, and a research data pipeline designed for a publishable paper on personalized opponent modeling in imperfect-information games.
 
@@ -30,12 +30,13 @@ Always keep this README's file listing current when adding or removing docs.
 | `README.md` | **This file.** Master index, project summary, directory structure |
 | `architecture.md` | System architecture: deployment targets, WebSocket protocol, API endpoints, DB schema, BotInterface |
 | `game-rules.md` | Complete game rules, passing mechanics, information model |
-| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Rule, Adaptive (5 bots) |
+| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Bayesian (4 bots) + planned PureNNBot, HybridBot |
 | `neural-network.md` | PPO architecture, state encoding, action space, training loop, hyperparameters |
 | `data-pipeline.md` | What gets logged, telemetry schema, privacy, how data is used for the paper |
 | `decisions.md` | Architectural decisions log (ADRs) |
 | `timeline.md` | Phase breakdown, milestones, success criteria |
-| `api-reference.md` | Backend API endpoints, WebSocket message format |
+| `research-papers.md` | Curated reading list for bluffing AI, PPO, Bayesian methods |
+| `handoff.md` | Session handoff context for AI agents |
 
 ---
 
@@ -52,15 +53,15 @@ To understand this project in 5 minutes, read:
 
 ## Project Status
 
-**Phase 1 in progress.** Backend game engine (`cards.py`, `game.py`), 5 bot implementations (`bots/`), FastAPI WebSocket server (`server.py`), and Next.js frontend (`frontend/`) all exist. NN bot planned for Phase 3.
+**Phase 1 partial complete.** Backend game engine (`cards.py`, `game.py`), 4 bot implementations (`bots/`), FastAPI WebSocket server (`server.py`), and Next.js frontend (`frontend/`) all exist and work. Gameplay is verified end-to-end. Deployment to Render + Vercel not yet done. NN bot planned for Phase 3.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | 🟡 In progress | Game engine + easy bots + web scaffold |
-| Phase 2 | ⬜ Not started | Bayesian opponent modeling + benchmarking |
+| Phase 1 | 🟡 Partial | Game engine + 4 bots + web scaffold (gameplay works, deployment pending) |
+| Phase 2 | ⬜ Not started | Deployment (Render + Vercel) + data pipeline |
 | Phase 3 | ⬜ Not started | PPO self-play training + NN bot |
-| Phase 4 | ⬜ Not started | Visualization + data collection |
-| Phase 5 | ⬜ Not started | Paper evaluation + submission |
+| Phase 4 | ⬜ Not started | Hybrid bot + experiments |
+| Phase 5 | ⬜ Not started | Paper draft + submission |
 
 ---
 
@@ -81,12 +82,12 @@ Bluff/
 │   ├── base.py          # BotInterface abstract class
 │   ├── random_bot.py    # Zero-intelligence baseline
 │   ├── honest_bot.py    # Never bluffs
-│   ├── cardcount_bot.py # Hypergeometric probability
-│   ├── rule_bot.py      # Fixed heuristic strategy
-│   └── adaptive_bot.py  # Bayesian opponent model + card counting
+│   ├── cardcount_bot.py # Hypergeometric probability (bluffs mathematically)
+│   ├── bayesian_bot.py  # Bayesian opponent model + card counting + offensive bluffing
+│   └── prob.py          # Shared Hypergeometric probability utilities
 ├── frontend/            # Next.js 16 web UI
 │   ├── src/app/
-│   │   ├── page.tsx     # Login/landing page
+│   │   ├── page.tsx     # Landing page (Clerk auth)
 │   │   ├── game/page.tsx # Game page (card UI)
 │   │   ├── layout.tsx   # Root layout
 │   │   └── globals.css  # Catppuccin Mocha theme

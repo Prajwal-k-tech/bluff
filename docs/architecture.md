@@ -126,18 +126,19 @@ The client sends a JWT in the first message after connection for authentication.
 
 | Event | Payload | When |
 |-------|---------|------|
-| `game_state` | Full game state (hand, pile size, draw pile, turn, history) | After every action |
-| `opponent_play` | `{ player_id, cards_count, claimed_rank, was_bluff }` | After opponent plays cards |
-| `challenge_result` | `{ was_correct, cards_revealed, pile_taken_by }` | After a bluff call |
-| `game_over` | `{ winner_id, reason, final_scores }` | When game ends |
+| `game_state` | Full game state (`hand`, `opponent_hand_size`, `pile_size`, `draw_pile_size`, `turn`, `current_player`, `last_action`, `message`, `phase`) | After every action |
+| `game_over` | `{ winner, message }` | When game ends |
+| `error` | `{ message }` | On invalid action |
+
+**Important:** After human plays, server sends TWO messages: (1) play confirmation with `phase="play"` (skippable), then (2) bot's response. After human calls bluff, server sends call result + potentially bot's next play. After human passes, server sends "You passed" with `phase="play"` (human plays again). Clients must drain all messages before next action.
 
 ### Client → Server Events
 
 | Event | Payload | When |
 |-------|---------|------|
-| `play_cards` | `{ cards: [card_id...], claimed_rank: rank }` | Player plays cards |
-| `call_bluff` | `{}` (no payload needed) | Player calls bluff |
-| `pass_turn` | `{}` (no payload needed) | Player passes (draws 1 card) |
+| `play` | `{ cards: [index...], rank: "K" }` | Player plays cards |
+| `call_bluff` | `{}` | Player calls bluff |
+| `pass` | `{}` | Player passes (draws 1 card) |
 
 ### Message Format
 
@@ -145,11 +146,9 @@ All messages are JSON:
 
 ```json
 {
-  "event": "play_cards",
-  "data": {
-    "cards": ["3H", "3S", "3D"],
-    "claimed_rank": 3
-  }
+  "type": "play",
+  "cards": [0, 1, 2],
+  "rank": "K"
 }
 ```
 

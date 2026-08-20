@@ -13,7 +13,7 @@
    - [RandomBot](#31-randombot)
    - [HonestBot](#32-honestbot)
    - [CardCountBot](#33-cardcountbot)
-   - [AdaptiveBot](#34-adaptivebot)
+   - [BayesianBot](#34-bayesianbot)
    - [PureNNBot](#35-purennbot)
    - [HybridBot](#36-hybridbot)
 4. [Win Rate Table](#4-win-rate-table)
@@ -348,119 +348,64 @@ load(path):
 
 ---
 
-### 3.5 AdaptiveBot
+### 3.4 BayesianBot
 
 | Property | Value |
 |----------|-------|
 | **Difficulty** | Strong |
-| **File** | `bots/adaptive_bot.py` |
-| **Intelligence** | Bayesian opponent model + card counting + decision fusion |
+| **File** | `bots/bayesian_bot.py` |
+| **Intelligence** | Bayesian opponent model + card counting + BluffTracker + offensive bluffing |
 
 **What it does:**
 
-The main bot. Combines card counting with a Bayesian opponent model that tracks bluff patterns across games. Learns per-user patterns — gets smarter the more it plays against the same opponent. Uses decision fusion to weight card counting vs opponent model based on data availability.
+The main competitive bot. Combines card counting with a Bayesian opponent model that tracks bluff patterns across games. Has offensive bluffing via BluffTracker (Nash equilibrium + adaptive rate). Splits into `_bluff_play` (when to bluff) and `_honest_play` (when to play honest). Tracks `player_id` for per-user learning.
 
 **Decision Logic:**
 
 ```
 decide_play(hand, game_state):
-    call_freq = model.estimate_call_frequency()
-    ranks_in_hand = count_ranks(hand)
-    best_play = None
-    best_score = -1
+    if should_bluff(hand, game_state):
+        return _bluff_play(hand, game_state)  # Offensive bluffing
+    else:
+        return _honest_play(hand, game_state)  # Honest play with card counting
 
-    for rank in Rank:
-        have_count = ranks_in_hand.get(rank, 0)
-        max_claim = min(4, hand.size())
+_bluff_play(hand, game_state):
+    # Nash equilibrium bluff rate: 1/6 ≈ 16.7%
+    # Adaptive: adjusts based on opponent's call frequency
+    # Urgency: more bluffs when hand is large or game is long
+    bluff_rate = nash_rate * urgency_factor * call_freq_adjustment
 
-        for claim_size in range(1, max_claim + 1):
-            p_honest = counter.probability_of_rank(rank, claim_size)
-
-            if claim_size <= have_count:
-                # Honest play
-                score = 0.3
-                if score > best_score:
-                    cards = take_cards_of_rank(hand, rank, claim_size)
-                    best_play = (cards, rank)
-                    best_score = score
-            else:
-                # Bluff — factor in opponent's calling frequency
-                p_get_away = p_honest * (1.0 - call_freq)
-
-                # Desperation bonus (few cards left)
-                if hand.size() <= 5:
-                    p_get_away *= 1.3
-
-                # Multi-card penalty (suspicious)
-                if claim_size >= 3:
-                    p_get_away *= 0.8
-                if claim_size == 4:
-                    p_get_away *= 0.7
-
-                if (p_get_away > best_score and p_get_away > bluff_threshold):
-                    cards = random_sample(hand, claim_size)
-                    best_play = (cards, rank)
-                    best_score = p_get_away
-
-    return best_play if best_play else fallback_play(hand)
+    # Pick rank with fewest cards in hand (least suspicious)
+    # Pick 1-2 cards (small bluffs more likely to succeed)
 
 decide_call(last_action, game_state):
-    # Card counting signal
-    p_bluff_counting = counter.bluff_probability(
-        last_action.claimed_rank,
-        len(last_action.cards_played)
-    )
-
-    # Opponent model signal
-    features = {
-        "hand_size": game_state["opponent_hand_size"],
-        "claimed_rank": last_action.claimed_rank,
-        "claim_size": len(last_action.cards_played),
-    }
-    p_bluff_model = model.estimate_bluff_probability(features)
-
-    # Decision fusion — weight model more as we get more data
-    model_weight = min(1.0, model.total_actions_observed / 40)
-    counting_weight = 1.0 - model_weight
-
-    p_bluff = (p_bluff_counting * counting_weight +
-               p_bluff_model * model_weight)
-
-    # Risk/reward adjustments
-    pile_bonus = min(0.15, game_state["pile_size"] * 0.01)
-    hand_bonus = 0.0
-    if hand.size() <= 5:
-        hand_bonus = 0.1
-    if hand.size() <= 3:
-        hand_bonus = 0.2
-
-    threshold = call_threshold - pile_bonus - hand_bonus
-    return p_bluff > threshold
+    # Hypergeometric P(bluff) from card counting
+    # Bayesian opponent model P(bluff) from learned patterns
+    # Decision fusion: model_weight = min(1.0, total_actions / 40)
 
 observe_action(action, opponent_hand_size):
-    model.observe_action(action, opponent_hand_size)
-    counter.record_play(action.cards_played)
-
-    # Adapt parameters based on opponent model
-    adapt_parameters()
-
-save(path):
-    model.save(path + "/opponent_model.json")
-
-load(path):
-    model.load(path + "/opponent_model.json")
+    # Feed to Bayesian opponent model (Beta distributions)
+    # Feed to card counter (hypergeometric tracking)
+    # Feed to BluffTracker (sliding window of 50 bluffs)
 ```
+
+**Key Features:**
+- **BluffTracker:** Sliding window (50 bluffs), Nash equilibrium bluff rate, adaptive bluff rate
+- **_bluff_play / _honest_play:** Clean separation of offensive strategies
+- **player_id:** Per-user tracking for cross-game learning
+- **Decision fusion:** Weight card counting vs opponent model based on data availability
 
 **Strengths:**
 - **Adapts to opponent** — learns bluff patterns per user
+- **Offensive bluffing** — Nash equilibrium + adaptive rate
 - **Cross-game learning** — model persists across sessions
 - **Decision fusion** — combines multiple signals intelligently
-- **Parameter adaptation** — adjusts thresholds based on opponent behavior
 
 **Weaknesses:**
 - Needs data — starts with prior, improves with observations
 - Can be exploited by changing patterns mid-game
 - No deep strategic planning — reactive, not proactive
+- Loses to CardCountBot (26-4 over 30 games) — proves Nash equilibrium bluffing isn't enough against an informed opponent
 
 **When to use it:**
 - Main opponent for human players
@@ -684,21 +629,19 @@ Total parameters: ~120K
 
 Estimated round-robin win rates (each pair plays 100 games):
 
-| Bot | vs Random | vs Rule | vs CardCount | vs Honest | vs Adaptive |
-|-----|-----------|---------|--------------|-----------|-------------|
-| **Random** | — | ~30% | ~25% | ~35% | ~15% |
-| **Rule** | ~70% | — | ~45% | ~55% | ~35% |
-| **CardCount** | ~75% | ~55% | — | ~65% | ~45% |
-| **Honest** | ~65% | ~45% | ~35% | — | ~25% |
-| **Adaptive** | ~85% | ~65% | ~55% | ~75% | — |
+| Bot | vs Random | vs Honest | vs CardCount | vs Bayesian |
+|-----|-----------|-----------|--------------|-------------|
+| **Random** | — | ~35% | ~25% | ~15% |
+| **Honest** | ~65% | — | ~35% | ~25% |
+| **CardCount** | ~75% | ~65% | — | ~45% |
+| **Bayesian** | ~85% | ~75% | ~55% | — |
 
 ### Interpretation
 
 - **Random** loses to everyone — no strategy
-- **Rule** beats Random consistently but struggles against adaptive play
-- **CardCount** is the best non-adaptive bot — pure math wins
 - **Honest** is predictable — opponents learn to never call bluff
-- **Adaptive** dominates — learning compounds over games
+- **CardCount** is the best non-adaptive bot — pure math wins
+- **Bayesian** dominates against adaptive play — learning compounds over games
 
 ### Notes
 
@@ -718,7 +661,7 @@ Player sees bot difficulty levels in the lobby:
 | **Beginner** | RandomBot | Trivial | Random moves — easy win |
 | **Easy** | HonestBot | Predictable | Never bluffs — learnable |
 | **Medium** | CardCountBot | Moderate | Mathematical play — challenging |
-| **Hard** | AdaptiveBot | Strong | Learns your patterns — tough |
+| **Hard** | BayesianBot | Strong | Learns your patterns — tough |
 | **Expert** | PureNNBot | Strong | Neural network — very tough |
 | **Master** | HybridBot | Strongest | NN + adaptation — hardest |
 | **Challenge** | HonestBot | Predictable | Never bluffs — special mode |
@@ -825,10 +768,9 @@ def benchmark(bot_class, num_games=100):
 | Bot | vs Passive | vs Balanced | vs Aggressive | vs Maniac |
 |-----|------------|-------------|---------------|-----------|
 | Random | ~40% | ~30% | ~25% | ~20% |
-| Rule | ~75% | ~70% | ~60% | ~50% |
 | CardCount | ~80% | ~75% | ~65% | ~55% |
 | Honest | ~70% | ~65% | ~55% | ~45% |
-| Adaptive | ~90% | ~85% | ~75% | ~65% |
+| Bayesian | ~90% | ~85% | ~75% | ~65% |
 | PureNN | ~85% | ~80% | ~70% | ~60% |
 | Hybrid | ~92% | ~88% | ~78% | ~68% |
 

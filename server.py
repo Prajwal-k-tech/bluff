@@ -7,10 +7,9 @@ Run:
 WebSocket protocol (JSON messages):
 
 Server → Client:
-    game_state    {hand, opponent_hand_size, pile_size, draw_pile_size, turn, current_player, last_action, message}
+    game_state    {hand, opponent_hand_size, pile_size, draw_pile_size, turn, current_player, last_action, message, phase}
     game_over     {winner, message}
     error         {message}
-    bot_playing   {}  — bot is thinking (no action required from client)
 
 Client → Server:
     play          {cards: [index...], rank: "K"}
