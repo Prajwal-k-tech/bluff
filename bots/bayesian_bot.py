@@ -1,0 +1,462 @@
+"""BayesianBot — Bayesian opponent model + card counting + offensive bluffing.
+
+The main competitive bot. Combines:
+1. Card counting (hypergeometric P(bluff))
+2. Bayesian opponent modeling (Beta distributions per feature)
+3. Adaptive decision fusion (trusts model more as data accumulates)
+4. Offensive bluffing: self-bluff tracking + adaptive bluff rate
+
+Persists learned state per opponent for cross-game learning.
+"""
+
+import json
+import os
+import random
+from typing import List, Tuple, Dict, Optional
+from cards import Card, Rank
+from game import Action
+from bots.base import BotInterface
+from bots.prob import Hypergeometric
+
+
+class BetaDistribution:
+    """Simple Beta distribution for Bayesian updating."""
+
+    def __init__(self, alpha: float = 1.0, beta: float = 1.0):
+        self.alpha = alpha
+        self.beta = beta
+
+    def mean(self) -> float:
+        return self.alpha / (self.alpha + self.beta)
+
+    def update(self, was_bluff: bool):
+        if was_bluff:
+            self.alpha += 1
+        else:
+            self.beta += 1
+
+    def to_dict(self) -> dict:
+        return {"alpha": self.alpha, "beta": self.beta}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BetaDistribution":
+        return cls(alpha=d["alpha"], beta=d["beta"])
+
+
+class OpponentModel:
+    """Bayesian opponent model using Beta distributions."""
+
+    def __init__(self):
+        self.bluff_by_hand_size: Dict[int, BetaDistribution] = {
+            i: BetaDistribution() for i in range(1, 27)
+        }
+        self.bluff_by_rank: Dict[Rank, BetaDistribution] = {
+            rank: BetaDistribution() for rank in Rank
+        }
+        self.bluff_by_claim_size: Dict[int, BetaDistribution] = {
+            i: BetaDistribution() for i in range(1, 5)
+        }
+        self.call_frequency = BetaDistribution()
+        self.total_actions_observed = 0
+
+    def observe_action(self, action: Action, opponent_hand_size: int):
+        self.total_actions_observed += 1
+
+        hs = min(opponent_hand_size, 26)
+        if hs not in self.bluff_by_hand_size:
+            self.bluff_by_hand_size[hs] = BetaDistribution()
+        self.bluff_by_hand_size[hs].update(action.was_bluff)
+
+        self.bluff_by_rank[action.claimed_rank].update(action.was_bluff)
+
+        cs = min(len(action.cards_played), 4)
+        if cs not in self.bluff_by_claim_size:
+            self.bluff_by_claim_size[cs] = BetaDistribution()
+        self.bluff_by_claim_size[cs].update(action.was_bluff)
+
+        if action.bluff_called:
+            self.call_frequency.update(True)
+        else:
+            self.call_frequency.update(False)
+
+    def estimate_bluff_probability(self, hand_size: int, claimed_rank: Rank,
+                                   claim_size: int) -> float:
+        estimates = []
+        weights = []
+
+        hs = min(hand_size, 26)
+        if hs in self.bluff_by_hand_size:
+            estimates.append(self.bluff_by_hand_size[hs].mean())
+            weights.append(2.0)
+
+        if claimed_rank in self.bluff_by_rank:
+            estimates.append(self.bluff_by_rank[claimed_rank].mean())
+            weights.append(1.5)
+
+        cs = min(claim_size, 4)
+        if cs in self.bluff_by_claim_size:
+            estimates.append(self.bluff_by_claim_size[cs].mean())
+            weights.append(1.0)
+
+        if not estimates:
+            return 0.3
+
+        return sum(e * w for e, w in zip(estimates, weights)) / sum(weights)
+
+    def estimate_call_frequency(self) -> float:
+        return self.call_frequency.mean()
+
+    def to_dict(self) -> dict:
+        return {
+            "total_actions_observed": self.total_actions_observed,
+            "call_frequency": self.call_frequency.to_dict(),
+            "bluff_by_hand_size": {str(k): v.to_dict()
+                                   for k, v in self.bluff_by_hand_size.items()},
+            "bluff_by_rank": {str(k.value): v.to_dict()
+                              for k, v in self.bluff_by_rank.items()},
+            "bluff_by_claim_size": {str(k): v.to_dict()
+                                    for k, v in self.bluff_by_claim_size.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "OpponentModel":
+        model = cls()
+        model.total_actions_observed = d.get("total_actions_observed", 0)
+        model.call_frequency = BetaDistribution.from_dict(d["call_frequency"])
+        for k, v in d.get("bluff_by_hand_size", {}).items():
+            model.bluff_by_hand_size[int(k)] = BetaDistribution.from_dict(v)
+        for k, v in d.get("bluff_by_rank", {}).items():
+            model.bluff_by_rank[Rank(int(k))] = BetaDistribution.from_dict(v)
+        for k, v in d.get("bluff_by_claim_size", {}).items():
+            model.bluff_by_claim_size[int(k)] = BetaDistribution.from_dict(v)
+        return model
+
+
+class BluffTracker:
+    """Tracks the bot's own bluff outcomes for adaptive bluff rate.
+
+    Maintains a sliding window of recent bluffs to estimate:
+    - Current bluff success rate
+    - Whether opponent is catching on
+    - Adaptive bluff frequency based on Nash equilibrium
+    """
+
+    def __init__(self, window_size: int = 50):
+        self.window_size = window_size
+        self.outcomes: List[bool] = []  # True = got away with it
+        self.total_attempted = 0
+        self.total_caught = 0
+        self.total_got_through = 0
+
+    def record_bluff(self, was_called: bool):
+        """Record the outcome of a bluff attempt."""
+        got_through = not was_called
+        self.outcomes.append(got_through)
+        if len(self.outcomes) > self.window_size:
+            self.outcomes.pop(0)
+        self.total_attempted += 1
+        if was_called:
+            self.total_caught += 1
+        else:
+            self.total_got_through += 1
+
+    def success_rate(self) -> float:
+        """Bluff success rate over the sliding window."""
+        if not self.outcomes:
+            return 0.5  # no data, assume 50/50
+        return sum(self.outcomes) / len(self.outcomes)
+
+    def nash_bluff_rate(self, pile_size: int) -> float:
+        """Nash equilibrium bluff frequency given current pile size.
+
+        When pile is large, caller benefits more from calling → bluff less.
+        When pile is small, bluffer benefits more → bluff more.
+        """
+        return 1.0 / (pile_size + 1)
+
+    def adaptive_bluff_rate(self, pile_size: int,
+                            opponent_call_freq: float) -> float:
+        """Compute target bluff rate combining Nash + opponent model.
+
+        If opponent calls a lot → bluff less (they're aggressive).
+        If opponent rarely calls → bluff more (they're passive).
+        Nash provides the baseline; opponent frequency adjusts it.
+        """
+        nash = self.nash_bluff_rate(pile_size)
+        # Strong adjustment: aggressive callers need much lower bluff rate
+        if opponent_call_freq > 0.6:
+            adjustment = 0.3  # aggressive caller → slash bluff rate
+        elif opponent_call_freq > 0.4:
+            adjustment = 0.6  # moderate caller → reduce
+        elif opponent_call_freq < 0.2:
+            adjustment = 1.5  # passive caller → bluff more
+        else:
+            adjustment = 1.0  # neutral
+        return max(0.02, min(0.4, nash * adjustment))
+
+    def should_bluff(self, hand_size: int, opponent_hand_size: int,
+                     pile_size: int, opponent_call_freq: float) -> bool:
+        """Decide whether to bluff this turn based on adaptive rate."""
+        target_rate = self.adaptive_bluff_rate(
+            pile_size, opponent_call_freq
+        )
+
+        # Urgency: bluff more when close to winning (few cards left)
+        urgency = 1.0
+        if hand_size <= 3:
+            urgency = 1.5
+        elif hand_size <= 5:
+            urgency = 1.2
+
+        # Desperation: bluff more when opponent is close to winning
+        if opponent_hand_size <= 3:
+            urgency *= 1.3
+
+        # Current success rate affects willingness
+        sr = self.success_rate()
+        if sr < 0.2:
+            urgency *= 0.5  # getting caught a lot → bluff less
+        elif sr > 0.7:
+            urgency *= 1.3  # getting away with it → can bluff more
+
+        effective_rate = min(0.7, target_rate * urgency)
+        return random.random() < effective_rate
+
+    def to_dict(self) -> dict:
+        return {
+            "outcomes": self.outcomes,
+            "total_attempted": self.total_attempted,
+            "total_caught": self.total_caught,
+            "total_got_through": self.total_got_through,
+            "window_size": self.window_size,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BluffTracker":
+        bt = cls(window_size=d.get("window_size", 50))
+        bt.outcomes = d.get("outcomes", [])
+        bt.total_attempted = d.get("total_attempted", 0)
+        bt.total_caught = d.get("total_caught", 0)
+        bt.total_got_through = d.get("total_got_through", 0)
+        return bt
+
+
+class CardCounter:
+    """Tracks visible cards for exact probability calculations."""
+
+    def __init__(self):
+        self.remaining_by_rank: Dict[Rank, int] = {rank: 4 for rank in Rank}
+        self.total_remaining: int = 52
+
+    def update_with_play(self, cards: List[Card]):
+        for card in cards:
+            if self.remaining_by_rank[card.rank] > 0:
+                self.remaining_by_rank[card.rank] -= 1
+                self.total_remaining -= 1
+
+    def bluff_probability(self, claimed_rank: Rank, claim_size: int,
+                          our_hand_size: int, opp_hand_size: int) -> float:
+        remaining_rank = self.remaining_by_rank.get(claimed_rank, 0)
+        remaining_total = self.total_remaining - our_hand_size
+
+        if remaining_total <= 0:
+            return 1.0
+        if claim_size > remaining_rank:
+            return 1.0
+
+        p_fewer = Hypergeometric.cdf(
+            claim_size - 1, remaining_total, remaining_rank, opp_hand_size
+        )
+        return 1.0 - p_fewer
+
+
+class BayesianBot(BotInterface):
+    """Bayesian opponent model + card counting + offensive bluffing."""
+
+    def __init__(self):
+        self.model = OpponentModel()
+        self.counter = CardCounter()
+        self.bluff_tracker = BluffTracker()
+        self.bluff_threshold = 0.55
+        self.call_threshold = 0.50
+        self.player_id: Optional[int] = None
+
+    def reset(self):
+        self.counter = CardCounter()
+        # Don't reset model — persists across games
+
+    def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
+        if not hand:
+            return ([], Rank.TWO)
+
+        rank_counts: Dict[Rank, int] = {}
+        for card in hand:
+            rank_counts[card.rank] = rank_counts.get(card.rank, 0) + 1
+
+        call_freq = self.model.estimate_call_frequency()
+        hand_size = len(hand)
+        opp_hand_size = game_state.get("opponent_hand_size", 10)
+        pile_size = game_state.get("pile_size", 0)
+
+        # Decide whether to bluff this turn
+        should_bluff = self.bluff_tracker.should_bluff(
+            hand_size, opp_hand_size, pile_size, call_freq
+        )
+
+        if should_bluff:
+            return self._bluff_play(hand, rank_counts, game_state)
+        else:
+            return self._honest_play(hand, rank_counts, game_state)
+
+    def _bluff_play(self, hand: List[Card], rank_counts: Dict[Rank, int],
+                    game_state: dict) -> Tuple[List[Card], Rank]:
+        """Execute a bluff play — claim cards are a rank we don't have (or under-represent)."""
+        hand_size = len(hand)
+        opp_hand_size = game_state.get("opponent_hand_size", 10)
+        call_freq = self.model.estimate_call_frequency()
+
+        best_score = -1
+        best_rank = None
+        best_cards: List[Card] = []
+
+        for rank in Rank:
+            have = rank_counts.get(rank, 0)
+            remaining = self.counter.remaining_by_rank.get(rank, 0)
+
+            for claim_size in range(1, min(4, hand_size) + 1):
+                if claim_size > hand_size:
+                    continue
+                if claim_size <= have:
+                    continue  # This would be honest, skip in bluff mode
+
+                # P(opponent can't disprove this claim)
+                p_undetected = self.counter.bluff_probability(
+                    rank, claim_size, hand_size, opp_hand_size
+                )
+                p_get_away = p_undetected * (1.0 - call_freq)
+
+                # Bonus: ranks with more remaining cards are harder to detect
+                # (opponent can't be sure we don't have them)
+                remaining_bonus = min(0.2, remaining * 0.05)
+
+                # Bonus: dumping more cards is better
+                dump_bonus = claim_size * 0.05
+
+                # Penalty: larger claims are riskier
+                size_penalty = 1.0
+                if claim_size >= 3:
+                    size_penalty = 0.8
+                if claim_size == 4:
+                    size_penalty = 0.65
+
+                score = (p_get_away + remaining_bonus + dump_bonus) * size_penalty
+
+                if score > best_score:
+                    best_score = score
+                    best_rank = rank
+                    best_cards = hand[:claim_size]
+
+        assert best_rank is not None
+        return (best_cards, best_rank)
+
+    def _honest_play(self, hand: List[Card], rank_counts: Dict[Rank, int],
+                     game_state: dict) -> Tuple[List[Card], Rank]:
+        """Play honest — claim cards we actually have."""
+        hand_size = len(hand)
+
+        best_score = -1
+        best_rank = None
+        best_cards: List[Card] = []
+
+        for rank in Rank:
+            have = rank_counts.get(rank, 0)
+            if have == 0:
+                continue
+
+            for claim_size in range(1, min(have, 4) + 1):
+                if claim_size > hand_size:
+                    continue
+
+                score = claim_size * 0.1
+                remaining = self.counter.remaining_by_rank.get(rank, 0)
+                if remaining <= 1:
+                    score += 0.2
+
+                if score > best_score:
+                    best_score = score
+                    best_rank = rank
+                    best_cards = [c for c in hand if c.rank == rank][:claim_size]
+
+        assert best_rank is not None
+        return (best_cards, best_rank)
+
+    def decide_call(self, last_action: Action, game_state: dict) -> bool:
+        hand_size = game_state.get("hand_size", 10)
+        opp_hand_size = game_state.get("opponent_hand_size", 10)
+        pile_size = game_state.get("pile_size", 0)
+        claimed_rank = last_action.claimed_rank
+        claim_size = len(last_action.cards_played)
+
+        # Card counting: P(bluff | game state)
+        p_bluff_counting = self.counter.bluff_probability(
+            claimed_rank, claim_size, hand_size, opp_hand_size
+        )
+
+        # Opponent model: P(bluff | opponent behavior)
+        p_bluff_model = self.model.estimate_bluff_probability(
+            opp_hand_size, claimed_rank, claim_size
+        )
+
+        # Adaptive weighting: trust model more as we get more data
+        model_weight = min(1.0, self.model.total_actions_observed / 40)
+        counting_weight = 1.0 - model_weight
+
+        p_bluff = (p_bluff_counting * counting_weight +
+                   p_bluff_model * model_weight)
+
+        # Risk/reward adjustments
+        pile_bonus = min(0.15, pile_size * 0.01)
+        hand_bonus = 0.0
+        if hand_size <= 5:
+            hand_bonus = 0.1
+        if hand_size <= 3:
+            hand_bonus = 0.2
+
+        threshold = self.call_threshold - pile_bonus - hand_bonus
+
+        return p_bluff > threshold
+
+    def observe_action(self, action: Action, opponent_hand_size: int):
+        # Update opponent model
+        self.model.observe_action(action, opponent_hand_size)
+
+        # Update card counter with revealed cards
+        if action.bluff_called:
+            self.counter.update_with_play(action.cards_played)
+        elif not action.was_bluff:
+            self.counter.update_with_play(action.cards_played)
+
+        # Track our own bluff outcomes
+        if self.player_id is not None and action.player == self.player_id and action.was_bluff:
+            self.bluff_tracker.record_bluff(action.bluff_called)
+
+    def save(self, path: str):
+        data = {
+            "model": self.model.to_dict(),
+            "bluff_tracker": self.bluff_tracker.to_dict(),
+            "bluff_threshold": self.bluff_threshold,
+            "call_threshold": self.call_threshold,
+        }
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+    def load(self, path: str):
+        if not os.path.exists(path):
+            return
+        with open(path) as f:
+            data = json.load(f)
+        self.model = OpponentModel.from_dict(data["model"])
+        self.bluff_tracker = BluffTracker.from_dict(data.get("bluff_tracker", {}))
+        self.bluff_threshold = data.get("bluff_threshold", 0.55)
+        self.call_threshold = data.get("call_threshold", 0.50)
