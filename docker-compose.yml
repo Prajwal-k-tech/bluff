@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bluff-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bluff
+      POSTGRES_USER: bluff
+      POSTGRES_PASSWORD: bluff_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bluff -d bluff"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: bluff-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://bluff:bluff_password@postgres:5432/bluff
+      - BLUFF_NN_CHECKPOINT=nn/checkpoints/final.pt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./nn/checkpoints:/app/nn/checkpoints:ro
+      - ./data:/app/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: bluff-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

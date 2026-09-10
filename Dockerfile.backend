@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install build dependencies for asyncpg and wheels if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend source code
+COPY cards.py game.py main.py server.py ./
+COPY bots/ ./bots/
+COPY db/ ./db/
+COPY nn/ ./nn/
+COPY analysis/ ./analysis/
+
+# Default port
+ENV PORT=8000
+EXPOSE 8000
+
+# Single worker: in-memory game rooms (docs/architecture.md §3)
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
