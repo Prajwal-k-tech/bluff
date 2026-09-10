@@ -31,26 +31,39 @@ BOT_TIERS = [
     ("Master", "hybrid"),
 ]
 
+def is_server_running(url: str) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=1) as resp:
+            return resp.status in (200, 404)
+    except Exception:
+        return False
+
 def run_multi_bot_and_ui_tests():
     print("=== Starting Multi-Bot & UI Edge Cases E2E Suite ===")
 
-    # 1. Start Backend & Frontend
-    backend_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8000"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=os.path.abspath(".")
-    )
-    frontend_proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", "3000"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=os.path.abspath("frontend")
-    )
+    backend_proc = None
+    frontend_proc = None
+
+    if not is_server_running("http://127.0.0.1:8000/docs"):
+        backend_proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.abspath(".")
+        )
+    if not is_server_running("http://127.0.0.1:3000"):
+        frontend_proc = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", "3000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.abspath("frontend")
+        )
 
     try:
-        print("   Giving servers 5 seconds to bind...")
-        time.sleep(5)
+        if backend_proc or frontend_proc:
+            print("   Giving newly spawned servers 5 seconds to bind...")
+            time.sleep(5)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -160,17 +173,23 @@ def run_multi_bot_and_ui_tests():
             print("=== Multi-Bot & UI Edge Cases E2E Suite PASSED ===")
 
     finally:
-        backend_proc.terminate()
-        frontend_proc.terminate()
-        try:
-            backend_proc.wait(timeout=3)
-        except Exception:
-            backend_proc.kill()
-        try:
-            frontend_proc.wait(timeout=3)
-        except Exception:
-            frontend_proc.kill()
-        print("Processes cleaned up cleanly.")
+        if backend_proc:
+            backend_proc.terminate()
+            try:
+                backend_proc.wait(timeout=3)
+            except Exception:
+                backend_proc.kill()
+        if frontend_proc:
+            frontend_proc.terminate()
+            try:
+                frontend_proc.wait(timeout=3)
+            except Exception:
+                frontend_proc.kill()
+        print("Server check / cleanup complete.")
+
+def test_multi_bot_and_ui():
+    """Pytest entrypoint for Playwright E2E verification."""
+    run_multi_bot_and_ui_tests()
 
 if __name__ == "__main__":
     run_multi_bot_and_ui_tests()

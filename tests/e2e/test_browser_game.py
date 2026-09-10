@@ -23,30 +23,42 @@ from playwright.sync_api import sync_playwright, expect
 SCREENSHOT_DIR = os.path.abspath("tests/e2e/screenshots")
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
+def is_server_running(url: str) -> bool:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=1) as resp:
+            return resp.status in (200, 404)
+    except Exception:
+        return False
+
 def run_browser_game_test():
     print("=== Starting End-to-End Browser Automation Suite ===")
-    
-    # 1. Start Backend (Port 8000)
-    print("1. Launching FastAPI backend on port 8000...")
-    backend_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8000"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=os.path.abspath(".")
-    )
-    
-    # 2. Start Frontend (Port 3000)
-    print("2. Launching Next.js frontend (npm run dev)...")
-    frontend_proc = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", "3000"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=os.path.abspath("frontend")
-    )
+
+    backend_proc = None
+    frontend_proc = None
+
+    if not is_server_running("http://127.0.0.1:8000/docs"):
+        print("1. Launching FastAPI backend on port 8000...")
+        backend_proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.abspath(".")
+        )
+
+    if not is_server_running("http://127.0.0.1:3000"):
+        print("2. Launching Next.js frontend (npm run dev)...")
+        frontend_proc = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", "3000"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=os.path.abspath("frontend")
+        )
 
     try:
-        print("   Giving servers 5 seconds to bind ports...")
-        time.sleep(5)
+        if backend_proc or frontend_proc:
+            print("   Giving newly spawned servers 5 seconds to bind ports...")
+            time.sleep(5)
 
         # 3. Launch Headless Chromium via Playwright
         print("3. Launching Headless Chromium browser...")
@@ -210,18 +222,23 @@ def run_browser_game_test():
             print("=== Playwright E2E Browser Test COMPLETED SUCCESSFULLY ===")
 
     finally:
-        print("Cleaning up processes...")
-        backend_proc.terminate()
-        frontend_proc.terminate()
-        try:
-            backend_proc.wait(timeout=3)
-        except Exception:
-            backend_proc.kill()
-        try:
-            frontend_proc.wait(timeout=3)
-        except Exception:
-            frontend_proc.kill()
-        print("Processes cleaned up cleanly.")
+        if backend_proc:
+            backend_proc.terminate()
+            try:
+                backend_proc.wait(timeout=3)
+            except Exception:
+                backend_proc.kill()
+        if frontend_proc:
+            frontend_proc.terminate()
+            try:
+                frontend_proc.wait(timeout=3)
+            except Exception:
+                frontend_proc.kill()
+        print("Server check / cleanup complete.")
+
+def test_browser_game():
+    """Pytest entrypoint for full interactive browser game automation."""
+    run_browser_game_test()
 
 if __name__ == "__main__":
     run_browser_game_test()
