@@ -21,6 +21,13 @@ CREATE TABLE IF NOT EXISTS game_sessions (
     result VARCHAR(10) NOT NULL,        -- 'win' | 'loss' | 'draw'
     num_turns INTEGER,
     duration_seconds INTEGER,
+    finished_at TIMESTAMPTZ,            -- set by log_session_end; absent in the
+                                        -- original architecture.md draft → added
+                                        -- here to match db/pg.py UPDATE.
+    model_loaded BOOLEAN DEFAULT FALSE, -- persisted opponent model was loaded at
+                                        -- session start (claim-(b) ablation switch:
+                                        -- win-rate delta loaded vs cold-start for the
+                                        -- SAME user — docs/s3-design.md §4).
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -40,6 +47,11 @@ CREATE TABLE IF NOT EXISTS actions (
     opponent_hand_size INTEGER,
     pile_size INTEGER,
     p_bluff_estimate FLOAT,             -- bot's Bayesian P(bluff) at decision time
+    decision_ms INTEGER,                -- HUMAN decision latency (ms from prompt to
+                                        -- action). Timing tells predict bluffs (Bitan &
+                                        -- Kraus: response duration is a top feature).
+                                        -- NULL for bot rows / terminal imports. Server
+                                        -- fills this when S3 wires web logging.
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -52,6 +64,10 @@ CREATE TABLE IF NOT EXISTS opponent_models (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, bot_id)
 );
+
+-- Schema v2 patch (2026-09-10): add model_loaded to existing deployments.
+-- Idempotent — safe to re-run; new deployments get it from CREATE TABLE above.
+ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS model_loaded BOOLEAN DEFAULT FALSE;
 
 -- Indexes (from docs/architecture.md)
 CREATE INDEX IF NOT EXISTS idx_actions_session ON actions(game_id);

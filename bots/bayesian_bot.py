@@ -62,6 +62,15 @@ class OpponentModel:
     def observe_action(self, action: Action, opponent_hand_size: int):
         self.total_actions_observed += 1
 
+        # Passes arrive as fabricated Actions with empty cards_played
+        # (server.py handle_human_pass). A pass carries NO evidence about
+        # rank honesty — recording it as "rank TWO, not bluff" polluted the
+        # rank/claim-size models with fake honest observations. Only the
+        # call_frequency signal (chose NOT to call) is real evidence.
+        if not action.cards_played:
+            self.call_frequency.update(action.bluff_called)
+            return
+
         hs = min(opponent_hand_size, 26)
         if hs not in self.bluff_by_hand_size:
             self.bluff_by_hand_size[hs] = BetaDistribution()
@@ -256,16 +265,25 @@ class CardCounter:
 
     def bluff_probability(self, claimed_rank: Rank, claim_size: int,
                           our_hand_size: int, opp_hand_size: int,
-                          our_copies: int = 0) -> float:
-        """P(opponent is lying) = P(opponent holds FEWER than claim_size
-        copies of the claimed rank).
+                          our_copies: int = 0,
+                          prior: float = 0.20,
+                          evidence_weight: float = 0.30) -> float:
+        """P(opponent is lying) — posterior, not raw likelihood.
 
-        NOTE: this was previously inverted (1 − P(fewer) = P(opponent *could*
-        hold them), which reads "honest" as "bluff"). Fixed 2026-09-10.
+        v2 (2026-09-10, ported from bots/base.py bluff_probability shrinkage).
+
+        Identical semantics to the pool-model version in base.py:
+        - pool-inconsistent claim (fewer unseen copies than claimed):
+          P = 1.0 — hard evidence, strategy-independent.
+        - otherwise: P = (1−w)·prior + w·CDF, a shrunk blend of the
+          population bluff base rate (0.20) with the hypergeometric
+          likelihood as a graded evidence term.
 
         Args:
             our_copies: copies of claimed_rank in OUR hand — subtracted from
                 the unseen pool since the opponent cannot hold them.
+            prior: population bluff base rate (default 0.20).
+            evidence_weight: shrinkage weight on the CDF (default 0.30).
         """
         remaining_rank = self.remaining_by_rank.get(claimed_rank, 0) - our_copies
         remaining_total = self.total_remaining - our_hand_size
@@ -273,14 +291,14 @@ class CardCounter:
         if remaining_total <= 0:
             return 1.0 if remaining_rank < claim_size else 0.0
         if claim_size > remaining_rank:
-            return 1.0  # impossible claim
+            return 1.0  # impossible claim — not enough unseen copies
         if opp_hand_size <= 0:
             return 0.0
 
         p_fewer = Hypergeometric.cdf(
             claim_size - 1, remaining_total, max(0, remaining_rank), opp_hand_size
         )
-        return p_fewer
+        return (1.0 - evidence_weight) * prior + evidence_weight * p_fewer
 
     def claim_plausibility(self, claimed_rank: Rank, claim_size: int,
                            our_hand_size: int, opp_hand_size: int,

@@ -19,6 +19,7 @@ Client → Server:
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Dict, Optional, List
 
@@ -33,6 +34,17 @@ from bots.honest_bot import HonestBot
 from bots.cardcount_bot import CardCountBot
 from bots.bayesian_bot import BayesianBot
 from bots.pure_nn_bot import PureNNBot
+from db import pg as db
+
+# Opponent-model persistence helpers (imported here to avoid polluting the
+# module-level namespace; only used inside GameRoom when the bot is Bayesian).
+_OpponentModel = None
+_BluffTracker = None
+try:
+    from bots.bayesian_bot import OpponentModel as _OpponentModel  # type: ignore[no-redef]
+    from bots.bayesian_bot import BluffTracker as _BluffTracker  # type: ignore[no-redef]
+except ImportError:
+    pass
 
 # ---------------------------------------------------------------------------
 # App
@@ -85,6 +97,57 @@ class GameRoom:
         self.ws: Optional[WebSocket] = None
         self.gamestarted = False
         self.waiting_for_human = False
+        # S3 web logging (best-effort, see db/pg.py — never breaks gameplay)
+        self.db_session_id: Optional[str] = None
+        self._prompt_ts: Optional[float] = None
+        self._game_start_ts: Optional[float] = None
+        # Per-user opponent-model persistence (session-level identity until
+        # Clerk lands — see docs/clerk-plan.md).
+        self.session_user_id: Optional[str] = None
+
+    async def db_start(self):
+        """Open a Neon session row for the current game (await once)."""
+        self._game_start_ts = time.time()
+        self._prompt_ts = None
+        # Identity: create/lookup the users row for every game (not just
+        # Bayesian) so game_sessions.player_id is always attributable.
+        self._model_loaded = False
+        if self.session_user_id:
+            try:
+                await db.ensure_user(self.session_user_id)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            self.db_session_id = await db.log_session_start(
+                self.bot_name, player_id=self.session_user_id)
+        except Exception:  # noqa: BLE001 — db layer already swallows; belt first
+            self.db_session_id = None
+        # Load persisted opponent model (best-effort, BayesianBot only)
+        if (self.session_user_id and _OpponentModel is not None
+                and isinstance(self.bot, BayesianBot)):
+            try:
+                saved = await db.load_opponent_model(
+                    self.session_user_id, self.bot_name)
+                if saved is not None:
+                    self.bot.model = _OpponentModel.from_dict(saved["model"])
+                    if "bluff_tracker" in saved and _BluffTracker is not None:
+                        self.bot.bluff_tracker = _BluffTracker.from_dict(
+                            saved["bluff_tracker"])
+                    if "bluff_threshold" in saved:
+                        self.bot.bluff_threshold = saved["bluff_threshold"]
+                    if "call_threshold" in saved:
+                        self.bot.call_threshold = saved["call_threshold"]
+                    self._model_loaded = True
+            except Exception:  # noqa: BLE001
+                pass  # fresh model is fine
+            # Ablation flag for the claim-(b) experiment (s3-design §4)
+            await db.set_model_loaded(self.db_session_id, self._model_loaded)
+
+    def _decision_ms(self) -> Optional[int]:
+        """Human decision latency since the last actionable prompt."""
+        if self._prompt_ts is None:
+            return None
+        return max(0, int((time.time() - self._prompt_ts) * 1000))
 
     async def connect(self, ws: WebSocket):
         await ws.accept()
@@ -94,6 +157,9 @@ class GameRoom:
         self.game = GameState(num_players=2)
         self.game.deal(cards_per_player)
         self.bot.reset()
+        # Attribute the bot's own bluffs to itself so BluffTracker records
+        # outcomes in web play (was always None → tracker never learned).
+        self.bot.player_id = self.bot_id
         self.gamestarted = True
 
     # -- Sending to client ---------------------------------------------------
@@ -115,6 +181,12 @@ class GameRoom:
             "pile_size_before": action.pile_size_before,
         }
 
+    @staticmethod
+    def _db_cards(cards: List[Card]) -> list:
+        """Compact strings for the DB, mirroring analysis/logger.py."""
+        suit_letters = {0: "H", 1: "D", 2: "C", 3: "S"}
+        return [f"{c.rank.display()}{suit_letters[int(c.suit)]}" for c in cards]
+
     async def send_game_state(self, message: str = "", phase: str = ""):
         if self.ws is None:
             return
@@ -127,6 +199,9 @@ class GameRoom:
                 phase = "call_or_pass"  # Human needs to call bluff or pass
             else:
                 phase = "waiting"
+        if phase in ("play", "call_or_pass"):
+            # Human decision latency starts at the actionable prompt (S3).
+            self._prompt_ts = time.time()
         payload = {
             "type": "game_state",
             "phase": phase,
@@ -152,9 +227,29 @@ class GameRoom:
         winner = self.game.winner
         if winner is None:
             human_won, message = False, "Draw — turn limit reached."
+            result = "draw"
         else:
             human_won = winner == self.human_id
             message = "You win!" if human_won else "Bot wins!"
+            result = "win" if human_won else "loss"
+        # Persist opponent model before closing (best-effort, BayesianBot only)
+        if (self.session_user_id
+                and isinstance(self.bot, BayesianBot)):
+            try:
+                model_data = {
+                    "model": self.bot.model.to_dict(),
+                    "bluff_tracker": self.bot.bluff_tracker.to_dict(),
+                    "bluff_threshold": self.bot.bluff_threshold,
+                    "call_threshold": self.bot.call_threshold,
+                }
+                await db.save_opponent_model(
+                    self.session_user_id, self.bot_name, model_data)
+            except Exception:  # noqa: BLE001
+                pass
+        await db.log_session_end(
+            self.db_session_id, result, self.game.turn_count,
+            int(time.time() - (self._game_start_ts or time.time())),
+        )
         await self.ws.send_json({
             "type": "game_over",
             "winner": winner,
@@ -194,6 +289,28 @@ class GameRoom:
         success, msg = self.game.play_cards(self.bot_id, cards, rank)
         if not success:
             return
+
+        # Bot may have emptied its hand → game over immediately (win is
+        # checked in play_cards before any respond phase; without this the
+        # human would hang waiting for a turn that never comes).
+        if self.game.game_over:
+            await self.send_game_over()
+            return
+
+        # Update card counter with bot's own play (learn card distribution).
+        # NOTE: we do NOT call observe_action here because that would feed
+        # the bot's own play into the *opponent* model, corrupting it.
+        if isinstance(self.bot, BayesianBot):
+            self.bot.counter.update_with_play(cards)
+
+        await db.log_action(
+            self.db_session_id, self.game.turn_count, "bot", "play",
+            cards_played=self._db_cards(cards), claimed_rank=int(rank),
+            was_bluff=not all(c.rank == rank for c in cards),
+            hand_size=bot_hand.size(),  # live ref: already post-play size
+            opponent_hand_size=self.game.get_hand(self.human_id).size(),
+            pile_size=self.game.get_pile_size(),
+        )
 
         # Notify human about bot's play and ask for call/pass
         self.waiting_for_human = True
@@ -242,6 +359,17 @@ class GameRoom:
             await self.send_error(msg)
             return
 
+        decision_ms = self._decision_ms()
+        await db.log_action(
+            self.db_session_id, self.game.turn_count, "human", "play",
+            cards_played=self._db_cards(cards), claimed_rank=int(rank),
+            was_bluff=not all(c.rank == rank for c in cards),
+            hand_size=hand.size(),
+            opponent_hand_size=self.game.get_hand(self.bot_id).size(),
+            pile_size=self.game.get_pile_size(),
+            decision_ms=decision_ms,
+        )
+
         # Tell the client what they played (frontend logs this from game_state)
         await self.send_game_state(
             message=f"You played {len(cards)} card(s) as {rank.display()}."
@@ -280,8 +408,30 @@ class GameRoom:
             success, result_msg, action = self.game.call_bluff(self.bot_id)
             if action:
                 self.bot.observe_action(action, self.game.get_hand(self.human_id).size())
+                await db.log_action(
+                    self.db_session_id, self.game.turn_count, "bot", "call",
+                    cards_played=self._db_cards(action.cards_played),
+                    claimed_rank=int(action.claimed_rank),
+                    was_bluff=action.was_bluff, bluff_called=True,
+                    caller_was_right=action.caller_was_right,
+                    hand_size=self.game.get_hand(self.bot_id).size(),
+                    opponent_hand_size=self.game.get_hand(self.human_id).size(),
+                    pile_size=self.game.get_pile_size(),
+                )
         else:
             success, result_msg = self.game.pass_turn(passer=self.bot_id)
+            # Observe human's play for opponent modeling (the bot is passing
+            # on this play — but the model should still learn from it).
+            self.bot.observe_action(
+                self.game.actions[-1],
+                self.game.get_hand(self.bot_id).size(),
+            )
+            await db.log_action(
+                self.db_session_id, self.game.turn_count, "bot", "pass",
+                hand_size=self.game.get_hand(self.bot_id).size(),
+                opponent_hand_size=self.game.get_hand(self.human_id).size(),
+                pile_size=self.game.get_pile_size(),
+            )
 
         if self.game.game_over:
             await self.send_game_over()
@@ -305,6 +455,17 @@ class GameRoom:
 
         if action:
             self.bot.observe_action(action, self.game.get_hand(self.bot_id).size())
+            await db.log_action(
+                self.db_session_id, self.game.turn_count, "human", "call",
+                cards_played=self._db_cards(action.cards_played),
+                claimed_rank=int(action.claimed_rank),
+                was_bluff=action.was_bluff, bluff_called=True,
+                caller_was_right=action.caller_was_right,
+                hand_size=self.game.get_hand(self.human_id).size(),
+                opponent_hand_size=self.game.get_hand(self.bot_id).size(),
+                pile_size=self.game.get_pile_size(),
+                decision_ms=self._decision_ms(),
+            )
 
         if self.game.game_over:
             await self.send_game_over()
@@ -336,6 +497,30 @@ class GameRoom:
         success, result_msg = self.game.pass_turn(passer=self.human_id)
 
         self.waiting_for_human = False
+
+        await db.log_action(
+            self.db_session_id, self.game.turn_count, "human", "pass",
+            hand_size=self.game.get_hand(self.human_id).size(),
+            opponent_hand_size=self.game.get_hand(self.bot_id).size(),
+            pile_size=self.game.get_pile_size(),
+            decision_ms=self._decision_ms(),
+        )
+
+        # Observe human's pass for opponent modeling — a pass tells the
+        # Bayesian layer the human chose NOT to call (updates call_frequency).
+        # We fabricate a minimal Action because pass_turn doesn't create one.
+        self.bot.observe_action(
+            Action(
+                player=self.human_id,
+                cards_played=[],
+                claimed_rank=Rank.TWO,   # placeholder — pass has no claim
+                was_bluff=False,
+                bluff_called=False,
+                caller_was_right=False,
+                pile_size_before=self.game.get_pile_size(),
+            ),
+            self.game.get_hand(self.bot_id).size(),
+        )
 
         # After human passes, human plays again
         await self.send_game_state(message=result_msg, phase="play")
@@ -410,9 +595,14 @@ async def websocket_endpoint(ws: WebSocket, room_id: str):
 
     await room.connect(ws)
 
+    # Stable per-connection identity for opponent-model persistence.
+    # Replaced by Clerk JWT sub when auth lands (docs/clerk-plan.md).
+    room.session_user_id = str(uuid.uuid4())
+
     try:
         # Start game and send initial state
         room.start_game()
+        await room.db_start()
         await room.send_game_state(message="Game started! Your turn to play.")
 
         # If bot goes first (random), run bot turn
@@ -438,6 +628,7 @@ async def websocket_endpoint(ws: WebSocket, room_id: str):
                 await room.handle_human_pass()
             elif action == "new_game":
                 room.start_game()
+                await room.db_start()
                 await room.send_game_state(message="New game! Your turn to play.")
                 if room.game.current_player == room.bot_id:
                     await room.run_bot_turn()

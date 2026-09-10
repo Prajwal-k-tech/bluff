@@ -1,12 +1,12 @@
 """PPO self-play training for BluffNet (Phase 3).
 
 Implements docs/neural-network.md:
-- Self-play games with opponent sampling (10% RandomBot, 10% HonestBot,
-  30% latest snapshot, 50% uniform from snapshot pool — ELO weighting is a
-  documented simplification, see ADR in docs/decisions.md)
-- Reward shaping: win ±1, cards shed +0.01/pc, bluff caught -0.3×pile,
-  successful bluff +0.1×cards
-- GAE(λ=0.95), PPO clip 0.2, 4 epochs/update, entropy bonus (critical)
+- League opponent sampling (ADR 2026-09-10 "league roster"): 40% scripted
+  archetypes (10% Random / 15% Honest / 15% CardCount / 15% Bayesian) +
+  45% snapshot pool + 15% mirror — Charlesworth-style scripted floor
+- Reward shaping (ADR 2026-09-10 "potential-based hand shaping"): win ±1,
+  draw −0.5, hand-size-delta potential 0.03/card, flat time cost 0.01/step
+- GAE(λ=0.95), PPO clip 0.2, 4 epochs/update, entropy annealing 0.05→0.01
 
 Usage:
     python -m nn.training --episodes 2000 --output nn/checkpoints/final.pt
@@ -15,9 +15,11 @@ Usage:
 
 import argparse
 import copy
+import json
 import os
 import random
 import sys
+import time
 from typing import List, Optional, Tuple
 
 import torch
@@ -30,6 +32,8 @@ from game import GameState
 from bots.base import BotInterface, build_game_state
 from bots.random_bot import RandomBot
 from bots.honest_bot import HonestBot
+from bots.cardcount_bot import CardCountBot
+from bots.bayesian_bot import BayesianBot
 
 from bots.base import pending_claims_from_actions, pool_by_rank
 from nn.model import (BluffNet, build_legal_actions, decode_action_into,
@@ -62,9 +66,15 @@ BLUFF_SUCCESS_BONUS = 0.1    # × cards dumped
 class NNPlayer:
     """Wraps a BluffNet + encoder as a playable policy (used for agent + pool)."""
 
-    def __init__(self, net: BluffNet, encoder: StateEncoder = None):
+    def __init__(self, net: BluffNet, encoder: StateEncoder = None,
+                 trace_signals: bool = False):
         self.net = net
         self.encoder = encoder or StateEncoder()
+        # Optional per-decision record of the observed opponent signals
+        # (analysis/conditioning_curve.py claim-#2 evidence). Disabled by
+        # default — zero overhead in training/eval.
+        self.trace_signals = trace_signals
+        self.signal_trace: List[dict] = []
 
     def _context(self, game: GameState, seat: int) -> dict:
         """Encoder context from the agent's own (fair) perspective."""
@@ -93,6 +103,13 @@ class NNPlayer:
         signals = opponent_signals_from_actions(actions, seat)
         signals["my_bluff_rate"] = my_bluff_rate
         signals["my_bluff_success_rate"] = my_bluff_success
+        if self.trace_signals:
+            self.signal_trace.append({
+                "opp_call_rate": signals["opponent_call_rate"],
+                "opp_revealed_bluff": signals["opponent_bluff_revealed"],
+                "my_bluff_rate": my_bluff_rate,
+                "turn": game.turn_count,
+            })
         return {
             "opponent_hand_size": game.get_hand(other).size(),
             "pile_size": game.get_pile_size(),
@@ -319,6 +336,19 @@ def play_training_game(agent: NNPlayer, opponent, agent_seat: int,
                            value)
             apply_hand_potential(t)
             transitions.append(t)
+            # Respond-phase metrics (conditioning_curve.py claim-#2 evidence)
+            stats["agent_responds"] = stats.get("agent_responds", 0) + 1
+            stats["agent_calls"] = stats.get("agent_calls", 0) + int(call)
+            # Snapshot for immediate pile-transfer credit below (v6.1: the
+            # v5/v6 respond head was signal-deaf because a wrong call's
+            # hand-delta landed on the NEXT transition — GAE had to ferry the
+            # signal back through V(s'), so the respond head never got a
+            # crisp gradient while the play head did. Charging the transfer
+            # at the decision that caused it fixes the asymmetry.)
+            resp_my_hand_before = game.get_hand(agent_seat).size()
+            resp_opp_hand_before = game.get_hand(1 - agent_seat).size()
+        else:
+            resp_my_hand_before = None
 
         if call:
             success, _, action = game.call_bluff(responder)
@@ -331,6 +361,18 @@ def play_training_game(agent: NNPlayer, opponent, agent_seat: int,
                 if pending_play is not None and current == agent_seat:
                     shape_bluff_outcome(pending_play, True,
                                         action.caller_was_right)
+            if responder == agent_seat and resp_my_hand_before is not None:
+                # v6.1 immediate pile-transfer credit at the respond decision:
+                # wrong call → we take the pile (my hand grows → negative);
+                # right call → bluffer takes it (their hand grows → positive).
+                # Sum telescopes consistently with Φ = c·(opp_hand − my_hand).
+                my_now = game.get_hand(agent_seat).size()
+                opp_now = game.get_hand(1 - agent_seat).size()
+                transitions[-1].reward += HAND_POTENTIAL * (resp_my_hand_before - my_now)
+                transitions[-1].reward += HAND_POTENTIAL * (opp_now - resp_opp_hand_before)
+                # Re-baseline the play-side potential so the transfer is not
+                # double-counted by the next transition's generic delta.
+                agent_hand_prev = my_now
         else:
             game.pass_turn(passer=responder)
             if pending_play is not None and current == agent_seat:
@@ -473,18 +515,24 @@ class OpponentPool:
         Charlesworth fixes exactly this with scripted-opponent curriculum:
         keep a permanent floor of simple, DIFFERENT opponents so the policy
         must stay robust to strategic archetypes, not just to itself.
-
-        Mix: 15% Random, 25% Honest, 30% latest snapshot, 30% uniform pool.
         """
+        # v6 mix (ADR 2026-09-10 "league roster"): 40% scripted archetypes
+        # (Charlesworth league floor) + 45% NN pool + 15% mirror. v4/v5 lesson:
+        # with only Random+Honest scripted, the policy overfits to two
+        # archetypes and loses to card-counters; the benchmark sweeps all four
+        # baselines, so train against all four.
         r = random.random()
-        if r < 0.15:
+        if r < 0.10:
             return RulePlayer(RandomBot(), "Random")
-        if r < 0.40:
+        if r < 0.25:
             return RulePlayer(HonestBot(), "Honest")
+        if r < 0.40:
+            return RulePlayer(CardCountBot(), "CardCount")
+        if r < 0.55:
+            return RulePlayer(BayesianBot(), "Bayesian")
         if r < 0.70 or not self.snaps:
             return latest
         return random.choice(self.snaps)
-
 
 def evaluate(net: BluffNet, opponent: RulePlayer, num_games: int,
              encoder: StateEncoder) -> tuple:
@@ -538,7 +586,8 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
           ent_coef_end: float = 0.01,
           eval_interval: int = 500, eval_games: int = 40,
           pool_size: int = 30, seed: int = 0, log_jsonl: Optional[str] = None,
-          device: str = "auto"):
+          device: str = "auto", ablate_opponent_features: bool = False,
+          init_from: Optional[str] = None):
     """PPO training with linear entropy annealing (ADR 2026-08-11: 0.05→0.01).
 
     ent_coef is the START value; it anneals linearly to ent_coef_end across
@@ -558,8 +607,21 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
     dev = torch.device(device)
     print(f"Device: {dev}")
 
-    encoder = StateEncoder()
-    net = BluffNet().to(dev)
+    # Claim-#2 ablation control: replace the 4 opponent-conditioning
+    # features with constant population priors (v4 marginals, zero opponent
+    # information) — the fair v4-comparable control run.
+    encoder = StateEncoder(use_bayesian_features=not ablate_opponent_features)
+    if init_from:
+        # Warm start (ADR 2026-09-10 "training resilience"): begin from prior
+        # weights instead of scratch — used for killed-run auto-resume
+        # (v7_latest) and curriculum-style runs. Three training runs (v4/v6/
+        # v6.1) died silently when the spawning agent session ended; resume
+        # capability is the cheap fix.
+        net = load_checkpoint(init_from).to(dev)
+        net.train()
+        print(f"Warm-started weights from {init_from}", flush=True)
+    else:
+        net = BluffNet().to(dev)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     pool = OpponentPool(pool_size)
     pool.add(net)
@@ -615,21 +677,43 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
 
         # ---- eval + checkpoint ----
         if episode % eval_interval == 0 or episode == episodes:
-            wr_random, bluff_random = evaluate(
-                net, RulePlayer(RandomBot(), "Random"), eval_games, encoder)
-            wr_honest, bluff_honest = evaluate(
-                net, RulePlayer(HonestBot(), "Honest"), eval_games, encoder)
+            # v6: eval against the full archetype roster (train what you test)
+            evals = {}
+            for opp_name, opp_cls in (("Random", RandomBot), ("Honest", HonestBot),
+                                      ("CardCount", CardCountBot),
+                                      ("Bayesian", BayesianBot)):
+                wr, bl = evaluate(net, RulePlayer(opp_cls(), opp_name),
+                                  eval_games, encoder)
+                evals[opp_name] = (wr, bl)
             metrics_str = (f" | pl={metrics['policy_loss']:.3f} "
                            f"vl={metrics['value_loss']:.3f} "
                            f"ent={metrics['entropy']:.3f}") if last_metrics else ""
-            print(f"[ep {episode:>6d}] vs Random={wr_random:.0%} "
-                  f"(bluff {bluff_random:.0%}) vs Honest={wr_honest:.0%} "
-                  f"(bluff {bluff_honest:.0%}) | recent={wins_recent}/"
-                  f"{games_recent} | pool={len(pool.snaps)}{metrics_str}")
+            per_opp = " ".join(f"vs {n}={w:.0%}(b{b:.0%})"
+                               for n, (w, b) in evals.items())
+            print(f"[ep {episode:>6d}] {per_opp} | recent={wins_recent}/"
+                  f"{games_recent} | pool={len(pool.snaps)}{metrics_str}",
+                  flush=True)
             last_metrics = metrics if len(buffer) == 0 else last_metrics
             wins_recent, games_recent = 0, 0
 
-            score = wr_random + wr_honest
+            score = sum(w for w, _ in evals.values())
+            # Crash-resilience + eval-curve artifacts (ADR 2026-09-10
+            # "training resilience"):
+            # - _latest.pt EVERY eval interval — a killed run never loses more
+            #   than eval_interval episodes (best-only saving cost us v6.1).
+            # - _eval.jsonl — machine-readable eval curve; stdout used to be
+            #   the only record and died with the process.
+            save_checkpoint(net, output.replace(".pt", "_latest.pt"))
+            with open(output.replace(".pt", "_eval.jsonl"), "a",
+                      encoding="utf-8") as ef:
+                ef.write(json.dumps({
+                    "record": "eval",
+                    "episode": episode,
+                    "opponents": {n: [round(w, 4), round(b, 4)]
+                                  for n, (w, b) in evals.items()},
+                    "best_combined": round(max(best_eval, score), 4),
+                    "timestamp": time.time(),
+                }) + "\n")
             if score > best_eval:
                 best_eval = score
                 save_checkpoint(net, output)
@@ -656,13 +740,23 @@ def main():
                         help='"auto" | "cpu" | "cuda"')
     parser.add_argument("--log", type=str, default=None,
                         help="Optional JSONL path for game summaries")
+    parser.add_argument("--ablate-opponent-features", action="store_true",
+                        help="Claim-#2 control: replace the 4 opponent-"
+                             "conditioning features with constant population "
+                             "priors (v4 marginals, zero opponent info)")
+    parser.add_argument("--init-from", type=str, default=None,
+                        help="Warm-start from a checkpoint (auto-resume / "
+                             "curriculum). Weights only; episode count "
+                             "restarts at 0.")
     args = parser.parse_args()
 
     train(episodes=args.episodes, output=args.output, ent_coef=args.ent_coef,
           ent_coef_end=args.ent_coef_end,
           lr=args.lr, eval_interval=args.eval_interval,
           eval_games=args.eval_games, batch_size=args.batch_size,
-          seed=args.seed, log_jsonl=args.log, device=args.device)
+          seed=args.seed, log_jsonl=args.log, device=args.device,
+          ablate_opponent_features=args.ablate_opponent_features,
+          init_from=args.init_from)
 
 
 if __name__ == "__main__":
