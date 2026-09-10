@@ -34,6 +34,7 @@ data/terminal/
 data/web/
 data/unified/
 data/models/
+data/*.pt
 nn/checkpoints/
 
 # Secrets

@@ -60,7 +60,15 @@ DEFAULT_CHECKPOINT = os.path.join(
 class HybridBot(BotInterface):
     """Hybrid AI combining PPO policy priors with Bayesian adaptation."""
 
-    def __init__(self, checkpoint_path: Optional[str] = None, thompson_sampling: bool = True):
+    def __init__(
+        self,
+        checkpoint_path: Optional[str] = None,
+        thompson_sampling: bool = True,
+        w_model_cap: float = 0.75,
+        exploit_mult: float = 2.5,
+        call_mult: float = 1.8,
+        variance_scaled: bool = True,
+    ):
         path = checkpoint_path or os.environ.get("BLUFF_NN_CHECKPOINT", DEFAULT_CHECKPOINT)
         if not os.path.exists(path):
             candidates = ["final.pt", "v7_best.pt", "v7_latest.pt", "v5.pt"]
@@ -72,6 +80,10 @@ class HybridBot(BotInterface):
 
         self.checkpoint_path = path
         self.thompson_sampling = thompson_sampling
+        self.w_model_cap = w_model_cap
+        self.exploit_mult = exploit_mult
+        self.call_mult = call_mult
+        self.variance_scaled = variance_scaled
         self.net: Optional[BluffNet] = None
         self.encoder = StateEncoder()
         self.player_id: Optional[int] = None
@@ -134,7 +146,7 @@ class HybridBot(BotInterface):
             call_freq = self.model.estimate_call_frequency()
             opp_bluff_rate = getattr(self.model, "overall_bluff", None)
             overall_bluff_p = opp_bluff_rate.mean() if opp_bluff_rate else 0.20
-        confidence = min(0.60, self.model.total_actions_observed / 50.0)
+        confidence = min(self.w_model_cap, self.model.total_actions_observed / 25.0)
 
         # Multi-card shedding when facing passive or honest opponents (call_freq < 0.35 or overall_bluff_p < 0.15).
         # In Cheat, shedding >= 2 cards per turn is the only way to reduce hand size
@@ -191,12 +203,12 @@ class HybridBot(BotInterface):
 
                 if is_honest:
                     if call_freq > 0.50:
-                        probs[action_idx] *= (1.0 + confidence * (call_freq - 0.50) * 1.5)
+                        probs[action_idx] *= (1.0 + confidence * (call_freq - 0.50) * self.exploit_mult)
                 else:
                     if call_freq > 0.50:
-                        probs[action_idx] *= max(0.05, 1.0 - confidence * (call_freq - 0.50) * 1.8)
+                        probs[action_idx] *= max(0.02, 1.0 - confidence * (call_freq - 0.50) * (self.exploit_mult * 1.2))
                     elif call_freq < 0.35:
-                        probs[action_idx] *= (1.0 + confidence * (0.35 - call_freq) * 2.0)
+                        probs[action_idx] *= (1.0 + confidence * (0.35 - call_freq) * (self.exploit_mult * 1.33))
 
             total_p = probs.sum()
             if total_p > 0:
@@ -311,9 +323,15 @@ class HybridBot(BotInterface):
                     nn_p = raw_nn
 
         n_obs = self.model.total_actions_observed
-        w_model = min(0.40, n_obs / 30.0)
-        w_count = 0.35
-        w_nn = max(0.25, 1.0 - w_model - w_count)
+        if self.variance_scaled:
+            var = self.model.overall_bluff.variance()
+            certainty = max(0.0, 1.0 - (var / 0.05))
+            w_model = min(self.w_model_cap, certainty * self.w_model_cap)
+        else:
+            w_model = min(self.w_model_cap, n_obs / 25.0)
+
+        w_count = 0.35 * (1.0 - w_model * 0.4)
+        w_nn = max(0.10, 1.0 - w_model - w_count)
 
         fused_bluff_prob = (
             w_nn * nn_p +
@@ -322,9 +340,9 @@ class HybridBot(BotInterface):
         )
 
         # Dynamic calling threshold:
-        # Chronic bluffers (Random) -> threshold drops to 0.40 (call aggressively)
+        # Chronic bluffers (Random) -> threshold drops (call aggressively)
         # Honest/conservative players -> threshold rises up to 0.85
-        call_thresh = max(0.40, min(0.85, 0.70 - (overall_p - 0.20) * 1.2))
+        call_thresh = max(0.35, min(0.85, 0.70 - (overall_p - 0.20) * self.call_mult))
         return fused_bluff_prob > call_thresh
 
     def observe_action(self, action: Action, opponent_hand_size: int):
@@ -339,12 +357,27 @@ class HybridBot(BotInterface):
             "bluff_threshold": self.bluff_threshold,
             "call_threshold": self.call_threshold,
             "thompson_sampling": self.thompson_sampling,
+            "w_model_cap": self.w_model_cap,
+            "exploit_mult": self.exploit_mult,
+            "call_mult": self.call_mult,
+            "variance_scaled": self.variance_scaled,
         }
 
     @classmethod
     def from_dict(cls, d: dict, checkpoint_path: Optional[str] = None) -> "HybridBot":
         thompson = d.get("thompson_sampling", True)
-        bot = cls(checkpoint_path=checkpoint_path, thompson_sampling=thompson)
+        w_cap = d.get("w_model_cap", 0.75)
+        exploit_m = d.get("exploit_mult", 2.5)
+        call_m = d.get("call_mult", 1.8)
+        var_sc = d.get("variance_scaled", True)
+        bot = cls(
+            checkpoint_path=checkpoint_path,
+            thompson_sampling=thompson,
+            w_model_cap=w_cap,
+            exploit_mult=exploit_m,
+            call_mult=call_m,
+            variance_scaled=var_sc,
+        )
         if "model" in d:
             bot.model = OpponentModel.from_dict(d["model"])
         if "bluff_tracker" in d:
@@ -371,3 +404,8 @@ class HybridBot(BotInterface):
         self.bluff_tracker = loaded.bluff_tracker
         self.bluff_threshold = loaded.bluff_threshold
         self.call_threshold = loaded.call_threshold
+        self.thompson_sampling = loaded.thompson_sampling
+        self.w_model_cap = loaded.w_model_cap
+        self.exploit_mult = loaded.exploit_mult
+        self.call_mult = loaded.call_mult
+        self.variance_scaled = loaded.variance_scaled

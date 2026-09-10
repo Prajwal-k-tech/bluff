@@ -29,6 +29,13 @@ class BetaDistribution:
     def mean(self) -> float:
         return self.alpha / (self.alpha + self.beta)
 
+    def variance(self) -> float:
+        """Variance of Beta(alpha, beta) = (alpha * beta) / ((alpha + beta)^2 * (alpha + beta + 1))."""
+        total = self.alpha + self.beta
+        if total <= 0:
+            return 0.0
+        return (self.alpha * self.beta) / ((total ** 2) * (total + 1.0))
+
     def sample(self) -> float:
         """Draw a sample from the Beta posterior (Thompson Sampling)."""
         return random.betavariate(max(1e-3, self.alpha), max(1e-3, self.beta))
