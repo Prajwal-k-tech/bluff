@@ -650,6 +650,30 @@ Estimated round-robin win rates (each pair plays 100 games):
 - Honest's weakness is exploitable — opponents bluffs freely
 - CardCount is the "rational baseline" — hard to beat without adaptation
 
+### v4 checkpoint results (2026-09-10 — PureNN without opponent conditioning)
+
+`python -m nn.benchmark --checkpoint nn/checkpoints/v4.pt --games 100`
+(deterministic policy, seats alternated; run read-only by Muse, B2-confirm by Buffy pending):
+
+| Matchup | NN win rate | NN bluff rate |
+|---|---|---|
+| PureNN vs Random | 100% | 48% |
+| PureNN vs Honest | 0% | 12% |
+| PureNN vs CardCount | 0% | 5% |
+| PureNN vs Bayesian | 0% | 3% |
+
+Verdict: **FAILS** the v4 success criterion (vs Honest >50%). Diagnosis
+(call-rate instrumentation + training-log cross-check, full evidence in
+AGENT_CHAT.md 12:54): deterministic policy calls ~90% vs Honest, who never
+bluffs, so every call loses the pile. Suspected cause: no opponent-conditioning
+signal (`opponent_call_rate` fixed at 0.3, no call-accuracy feature) — the net
+learns the average best response (always call) instead of identifying Honest.
+This negative result supports research claim #2 (conditioning should close
+exactly this gap); keep v4.pt as the unconditioned baseline. Engine note: on
+the fixed 100-turn engine, honest-heavy matchups draw heavily (fresh 20-game
+tournament: Honest–CardCount 0-0-20, Honest–Bayesian 1-1-18) — pre-cap
+estimate tables above are stale and will be replaced by B2's full benchmark.
+
 ---
 
 ## 5. Bot Selection UX

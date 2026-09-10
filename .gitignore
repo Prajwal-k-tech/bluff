@@ -40,3 +40,6 @@ nn/checkpoints/
 .env
 .env.local
 .env.production
+
+# Deepwork local state (git-local, OpenCode-readable)
+.slim/deepwork/

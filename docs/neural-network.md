@@ -2,6 +2,11 @@
 
 Phase 3 deliverable. PPO self-play for offensive bluffing strategy, deployed as pre-trained model weights.
 
+> **Status (2026-09-10):** Implemented in `nn/`. The v1 checkpoint was trained
+> on a buggy pipeline and is **invalid for research claims** (see ADRs
+> 2026-09-10 in docs/decisions.md). v2+ checkpoints from the fixed pipeline are
+> the citable artifacts.
+
 > **Critical distinction:** The NN and Bayesian model solve *different* problems and are *not* redundant.
 > - **Bayesian (defensive):** "Is this opponent bluffing?" → when to CALL
 > - **PPO NN (offensive):** "When should I bluff?" → action selection / policy
@@ -49,7 +54,7 @@ These are *strategic* decisions that require temporal reasoning across a full ga
 class BluffNet(nn.Module):
     """Actor-Critic network for Bluff. ~100k parameters."""
 
-    def __init__(self, state_dim=50, action_dim=54):
+    def __init__(self, state_dim=38, action_dim=54):
         super().__init__()
 
         # Shared backbone
@@ -70,6 +75,16 @@ class BluffNet(nn.Module):
         shared = self.shared(state)
         return self.actor(shared), self.critic(shared)
 ```
+
+**As-implemented notes (nn/model.py):**
+- `state_dim=38` (the encoder's actual output; docs originally said 50)
+- `act()` masks illegal actions to −inf before softmax; illegal entries get
+  zero probability, so sampling never produces an illegal action
+- `build_legal_actions(..., respond_only=True)` restricts the mask to
+  {call, pass} during respond decisions — **critical**, see §Action Masking
+- `decode_action_into()` re-derives a legal (cards, rank) pair from the raw
+  hand, so any sampled play index maps to a legal move (honest when we hold
+  the rank, bluff-dump when we don't)
 
 **Architecture rationale:**
 - 256→256 hidden layers match Big 2 PPO (proven for card games)
@@ -174,6 +189,25 @@ def get_action(self, state, legal_actions):
 - Can't play 4 cards of rank X if you only have 2
 - Can't pass if the game rules force a call (empty draw pile)
 
+### ⚠️ Phase-Phase Masking (v1 bug — the most important lesson)
+
+The **respond decision** (call bluff vs pass) must use a **respond-only mask**
+containing exactly {call, pass} — NOT the full 54-action space. With the full
+mask, the 52 play actions dominate the softmax (~96%), the net samples a junk
+"play" index almost always, and the harness coerces it into a call. Consequences
+in v1: 88% of training games were draws (endless call-wars), stored log-probs
+didn't match executed behavior, and PPO ratios were meaningless.
+
+Two companion rules make masking correct end-to-end:
+1. **Log-probs must be computed under the same masked distribution** used for
+   sampling (illegal → −inf before log_softmax), or the PPO importance ratio
+   is ill-defined.
+2. **Entropy must skip masked entries** — `exp(−inf)·(−inf) = NaN`; zero the
+   illegal entries' log-probs before the sum.
+
+All three are implemented in `nn/training.py` (`build_legal_actions`, `_obs`,
+`ppo_update`) and ADR'd 2026-09-10.
+
 ---
 
 ## Reward Function
@@ -203,15 +237,27 @@ The reward function is shaped to incentivize winning while specifically rewardin
 | `lr` | 3e-4 | Fixed (simpler than annealing for initial experiments) |
 | `clip_epsilon` | 0.2 | PPO clipping (universal) |
 | `epochs` | 4 | Per update |
-| `batch_size` | 2048 | Rollout batch size |
+| `batch_size` | 2048 | Rollout batch size (minibatch 256) |
 | `gamma` | 0.99 | Discount factor |
 | `gae_lambda` | 0.95 | GAE parameter |
-| `ent_coef` | 0.01–0.05 | Ablation needed — critical for stochastic bluffing |
+| `ent_coef` | 0.05 → 0.01 | **Annealed linearly** across the run (ADR 2026-08-11, implemented 2026-09-10) |
 | `vf_coef` | 0.5 | Value function loss weight |
 | `max_grad_norm` | 0.5 | Gradient clipping |
 | `total_episodes` | 200,000 | Training episodes |
-| `eval_interval` | 5,000 | Evaluate every N episodes |
+| `eval_interval` | 500–5,000 | Evaluate every N episodes (deterministic eval) |
 | `pool_size` | 30 | Opponent pool snapshots |
+| `device` | auto | `--device cuda` on the RTX 3050; checkpoints always save CPU tensors |
+
+### Evaluation Protocol (as implemented)
+
+- **Deterministic** (argmax over masked logits) — stochastic eval made
+  checkpoint selection noisy in v1
+- Reports **bluff rate** alongside win rate — bluff-frequency-over-training is
+  a first-class paper metric (Dewey 2025, Ahle 2022; Yeung 2008 gives the
+  theoretical equilibrium bluff rate for a given payoff structure)
+- Agent plays both seats across eval games (seat parity controlled)
+- Best checkpoint by combined win rate vs Random + Honest saved as
+  `<output>_best.pt`
 
 **Why these values:**
 - `lr=3e-4`: Standard PPO learning rate for small networks. Can anneal to 1e-4 later.
@@ -281,7 +327,7 @@ def sample_opponent(pool, strategy="mixed"):
 
 ## Integration with Bayesian Model
 
-The integration is *implicit*, not explicit. The Bayesian model's output is fed as input features to the NN, and the NN learns to condition on it automatically:
+The integration is *implicit*, not explicit. The Bayesian model's output is fed as input features to the NN, and the NN learns to condition on it automatically. **PureNNBot runs without a Bayesian model and fills the 3 integration features with the population prior** (opponent_call_rate = 0.3, the Beta(3,7) mean) — so the trained policy degrades gracefully and HybridBot later swaps in real per-opponent estimates:
 
 ```python
 # NN outputs base policy
@@ -365,15 +411,23 @@ Key claims:
 
 ```
 nn/
-├── model.py          # BluffNet architecture, action masking
-├── training.py       # PPO training loop, opponent sampling
-├── state_encoder.py  # Game state → flat vector
-└── checkpoints/      # Saved model weights
-    ├── checkpoint_5k.pt
-    ├── checkpoint_10k.pt
-    ├── ...
-    └── final.pt
+├── model.py          # BluffNet architecture, action masking, decode
+├── training.py       # PPO training loop, GAE, opponent pool, --device
+├── state_encoder.py  # Game state → 38-dim vector (public-info pool model)
+└── checkpoints/      # Saved model weights (gitignored)
+    ├── v1.pt         # INVALID — buggy pipeline, kept for comparison only
+    ├── v2.pt         # first fixed-pipeline checkpoint
+    └── final.pt      # deployment checkpoint (PureNNBot default)
 ```
+
+**Known pitfalls (learned the hard way — see ADRs 2026-09-10):**
+1. Respond decisions need a respond-only action mask (play actions dominate
+   an unmasked 54-action softmax)
+2. Log-probs must come from the masked distribution (PPO ratio validity)
+3. Entropy term must skip masked entries (NaN otherwise)
+4. Card-counting features must respect the information model — uncalled pile
+   cards are hidden (use the pending-claims pool model, not "cards seen")
+5. Evaluation must be deterministic for reliable checkpoint selection
 
 **Key files:**
 - `model.py`: Network definition, forward pass, action selection with masking
@@ -396,9 +450,14 @@ python -m nn.export --input nn/checkpoints/final.pt --output static/models/bluff
 ```
 
 **Deployment flow:**
-1. Train in terminal (fast, no GPU required)
-2. Export model weights to static file
-3. Web server loads weights at startup
-4. During gameplay, server runs inference per action
+1. Train in terminal (`--device cuda` on the RTX 3050; CPU also fine for this net size)
+2. Copy the chosen checkpoint to `nn/checkpoints/final.pt` (or set `BLUFF_NN_CHECKPOINT`)
+3. Web server loads weights at startup (CPU tensors — portable)
+4. During gameplay, server runs inference per action (deterministic argmax)
 
 **Inference cost:** ~1ms per action (CPU), negligible for real-time play.
+
+**GPU note (RTX 3050, ADR 2026-09-10):** the rollout game loop is pure Python
+and the net is ~100k params, so the GPU accelerates the PPO update phase, not
+the environment. `--device auto` picks CUDA when available; measure epochs/sec
+to confirm the speedup is real before crediting it in the paper.

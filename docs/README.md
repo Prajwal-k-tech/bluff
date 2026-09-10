@@ -14,6 +14,7 @@
 |-------------------|-----------------|
 | Make architectural decisions | `decisions.md` |
 | Add or change bot modes | `bot-modes.md` |
+| Land benchmark numbers (any source) | `benchmarks.md` |
 | Modify game rules | `game-rules.md` |
 | Change NN architecture or training | `neural-network.md` |
 | Modify the data pipeline | `data-pipeline.md` |
@@ -30,13 +31,16 @@ Always keep this README's file listing current when adding or removing docs.
 | `README.md` | **This file.** Master index, project summary, directory structure |
 | `architecture.md` | System architecture: deployment targets, WebSocket protocol, API endpoints, DB schema, BotInterface |
 | `game-rules.md` | Complete game rules, passing mechanics, information model |
-| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Bayesian (4 bots) + planned PureNNBot, HybridBot |
+| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Bayesian, PureNNBot (5 bots) + planned HybridBot |
 | `neural-network.md` | PPO architecture, state encoding, action space, training loop, hyperparameters |
 | `data-pipeline.md` | What gets logged, telemetry schema, privacy, how data is used for the paper |
 | `decisions.md` | Architectural decisions log (ADRs) |
 | `timeline.md` | Phase breakdown, milestones, success criteria |
 | `research-papers.md` | Curated reading list for bluffing AI, PPO, Bayesian methods |
+| `benchmarks.md` | Results tables for the paper (baselines, checkpoints, methods notes) |
+| `paper-outline.md` | Living paper outline: claims → evidence map, experiment matrix, skeleton |
 | `handoff.md` | Session handoff context for AI agents |
+| *(repo root)* `worksplit.md` + `AGENT_CHAT.md` | Two-agent coordination board (Buffy × Muse): task ownership + message log |
 
 ---
 
@@ -53,15 +57,19 @@ To understand this project in 5 minutes, read:
 
 ## Project Status
 
-**Phase 1 partial complete.** Backend game engine (`cards.py`, `game.py`), 4 bot implementations (`bots/`), FastAPI WebSocket server (`server.py`), and Next.js frontend (`frontend/`) all exist and work. Gameplay is verified end-to-end. Deployment to Render + Vercel not yet done. NN bot planned for Phase 3.
+**Phase 3 active.** Engine (5 bots incl. PureNNBot), web app, JSONL pipeline,
+DB schema, and the full PPO training stack exist and work. Three documented
+PPO failure modes were found and fixed (docs/decisions.md ADRs 2026-09-10);
+v5 is the opponent-conditioned run testing research claim #2. Deployment
+(Render + Vercel + Neon) still pending.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | 🟡 Partial | Game engine + 4 bots + web scaffold (gameplay works, deployment pending) |
-| Phase 2 | ⬜ Not started | Deployment (Render + Vercel) + data pipeline |
-| Phase 3 | ⬜ Not started | PPO self-play training + NN bot |
+| Phase 1 | 🟡 Partial | Game engine + 5 bots + web scaffold (gameplay works, deployment pending) |
+| Phase 2 | 🟡 Partial | JSONL pipeline + DB schema done; Neon not connected, deployment pending |
+| Phase 3 | 🔄 Active | PPO implemented; v5 opponent-conditioning run in flight; ablations queued |
 | Phase 4 | ⬜ Not started | Hybrid bot + experiments |
-| Phase 5 | ⬜ Not started | Paper draft + submission |
+| Phase 5 | ⬜ Not started | Paper draft (outline exists: `paper-outline.md`) + submission |
 
 ---
 
