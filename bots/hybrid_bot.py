@@ -23,6 +23,7 @@ Decision Fusion & Thompson Sampling:
 
 import os
 import random
+import math
 from typing import Dict, List, Optional, Tuple
 
 import torch
@@ -206,9 +207,13 @@ class HybridBot(BotInterface):
                         probs[action_idx] *= (1.0 + confidence * (call_freq - 0.50) * self.exploit_mult)
                 else:
                     if call_freq > 0.50:
-                        probs[action_idx] *= max(0.02, 1.0 - confidence * (call_freq - 0.50) * (self.exploit_mult * 1.2))
+                        probs[action_idx] = 0.0
                     elif call_freq < 0.35:
                         probs[action_idx] *= (1.0 + confidence * (0.35 - call_freq) * (self.exploit_mult * 1.33))
+
+            # If all legal plays were bluffs (no honest cards in hand for legal claims), restore masked probs
+            if probs.sum() <= 0:
+                probs = F.softmax(masked_logits, dim=-1).cpu()
 
             total_p = probs.sum()
             if total_p > 0:
@@ -322,6 +327,22 @@ class HybridBot(BotInterface):
                 else:
                     nn_p = raw_nn
 
+        # Dewey (2025) Stake-Sensitive Dynamic Risk Thresholding:
+        # Expected value of calling vs passing:
+        #   Low pile (1-3 cards): threshold discounts by up to 0.15 -> call aggressively
+        #   High pile (6+ cards): threshold increases by up to 0.25 -> call defensively
+        pile_size = game_state.get("pile_size", 0)
+        base_threshold = 0.50
+        stake_adjustment = math.tanh((pile_size - 3.0) / 6.0) * 0.25
+        deception_discount = (overall_p - 0.20) * (self.call_mult * 0.30)
+        call_thresh = max(0.35, min(0.85, base_threshold + stake_adjustment - deception_discount))
+
+        # NN tactical modulation (bounded +-0.05, avoids probability dilution)
+        if self.net is not None:
+            nn_delta = (nn_p - 0.50) * 0.08
+            call_thresh = max(0.35, min(0.85, call_thresh - nn_delta))
+
+        # Dynamic Bayesian + Combinatorial Fusion
         n_obs = self.model.total_actions_observed
         if self.variance_scaled:
             var = self.model.overall_bluff.variance()
@@ -330,19 +351,9 @@ class HybridBot(BotInterface):
         else:
             w_model = min(self.w_model_cap, n_obs / 25.0)
 
-        w_count = 0.35 * (1.0 - w_model * 0.4)
-        w_nn = max(0.10, 1.0 - w_model - w_count)
+        w_count = 1.0 - w_model
+        fused_bluff_prob = w_model * model_p + w_count * counting_p
 
-        fused_bluff_prob = (
-            w_nn * nn_p +
-            w_model * model_p +
-            w_count * counting_p
-        )
-
-        # Dynamic calling threshold:
-        # Chronic bluffers (Random) -> threshold drops (call aggressively)
-        # Honest/conservative players -> threshold rises up to 0.85
-        call_thresh = max(0.35, min(0.85, 0.70 - (overall_p - 0.20) * self.call_mult))
         return fused_bluff_prob > call_thresh
 
     def observe_action(self, action: Action, opponent_hand_size: int):

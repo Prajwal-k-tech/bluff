@@ -6,7 +6,7 @@ Compares four distinct Bayesian-to-NN weighting regimes for HybridBot:
 3. "Bluff Beast" (Dominant): w_model_cap = 0.75, exploit_mult = 3.0, call_mult = 2.0 (aggressive exploitation)
 4. Dynamic Variance-Scaled:  w_model dynamically scales with inverse variance of Beta posterior
 
-Evaluates each regime over 120 games per matchup (480 games total)
+Evaluates each regime over 100 games per matchup (400 games per regime, 1,600 total across 4 regimes)
 with strict 50/50 seat alternation against Honest, CardCount, Bayesian, and Random opponents.
 """
 

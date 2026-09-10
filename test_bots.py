@@ -32,6 +32,12 @@ try:
 except (ImportError, OSError):
     _HYBRID_AVAILABLE = False
 
+try:
+    from bots.academic_beast_bot import AcademicBeastBot
+    _BEAST_AVAILABLE = True
+except (ImportError, OSError):
+    _BEAST_AVAILABLE = False
+
 
 def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
                     max_turns: int = 300,
@@ -157,7 +163,8 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
 
 def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
                    checkpoint: Optional[str] = None,
-                   seed: Optional[int] = None):
+                   seed: Optional[int] = None,
+                   include_beast: bool = False):
     """Run round-robin tournament between all bots.
 
     Args:
@@ -167,6 +174,7 @@ def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
             Bayesian bluff draws, PureNN fallback). Tournament path never
             samples torch (PureNN decides deterministically), so this covers
             all stochasticity in the harness.
+        include_beast: if True, includes AcademicBeastBot in the tournament.
     """
     if seed is not None:
         random.seed(seed)
@@ -187,6 +195,12 @@ def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
                            if checkpoint else HybridBot)
     else:
         print("  [SKIP] HybridBot not available")
+
+    if include_beast and _BEAST_AVAILABLE:
+        bots["AcademicBeast"] = (partial(AcademicBeastBot, checkpoint_path=checkpoint)
+                                 if checkpoint else AcademicBeastBot)
+    elif include_beast:
+        print("  [SKIP] AcademicBeastBot not available")
 
     tee = None
     if log_path:
@@ -276,9 +290,12 @@ def main():
     parser.add_argument("--seed", type=int, default=None,
                         help="Seed Python RNG for reproducible tournaments "
                              "(deck shuffles + rule-bot draws).")
+    parser.add_argument("--include-beast", action="store_true",
+                        help="Include AcademicBeastBot (Dewey EV + Southey) in the tournament.")
     args = parser.parse_args()
     run_tournament(args.games, log_path=args.log,
-                   checkpoint=args.checkpoint, seed=args.seed)
+                   checkpoint=args.checkpoint, seed=args.seed,
+                   include_beast=args.include_beast)
 
 
 if __name__ == "__main__":

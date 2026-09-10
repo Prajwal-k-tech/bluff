@@ -1,0 +1,72 @@
+{
+  "baseline": {
+    "name": "Baseline_Conservative",
+    "wins": 195,
+    "losses": 3,
+    "draws": 2,
+    "total_calls": 469,
+    "correct_calls": 31,
+    "s_lock_sum": 3426.0,
+    "games_count": 200,
+    "per_opp": {
+      "HonestBot": [
+        95,
+        3,
+        2
+      ],
+      "BayesianBot": [
+        100,
+        0,
+        0
+      ]
+    },
+    "win_rate": 97.5,
+    "loss_rate": 1.5,
+    "draw_rate": 1.0,
+    "w_ci": [
+      0.9428208558483829,
+      0.9892754385292123
+    ],
+    "l_ci": [
+      0.005114145184492384,
+      0.04316648055627889
+    ],
+    "call_accuracy": 6.609808102345416,
+    "mean_s_lock": 17.13
+  },
+  "beast": {
+    "name": "Dewey_EV_Beast",
+    "wins": 199,
+    "losses": 1,
+    "draws": 0,
+    "total_calls": 477,
+    "correct_calls": 21,
+    "s_lock_sum": 3176.0,
+    "games_count": 200,
+    "per_opp": {
+      "HonestBot": [
+        99,
+        1,
+        0
+      ],
+      "BayesianBot": [
+        100,
+        0,
+        0
+      ]
+    },
+    "win_rate": 99.5,
+    "loss_rate": 0.5,
+    "draw_rate": 0.0,
+    "w_ci": [
+      0.9722256001302286,
+      0.999116854010634
+    ],
+    "l_ci": [
+      0.0008831459893662054,
+      0.02777439986977148
+    ],
+    "call_accuracy": 4.40251572327044,
+    "mean_s_lock": 15.88
+  }
+}
