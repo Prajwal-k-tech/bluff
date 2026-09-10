@@ -255,19 +255,56 @@ class CardCounter:
                 self.total_remaining -= 1
 
     def bluff_probability(self, claimed_rank: Rank, claim_size: int,
-                          our_hand_size: int, opp_hand_size: int) -> float:
-        remaining_rank = self.remaining_by_rank.get(claimed_rank, 0)
+                          our_hand_size: int, opp_hand_size: int,
+                          our_copies: int = 0) -> float:
+        """P(opponent is lying) = P(opponent holds FEWER than claim_size
+        copies of the claimed rank).
+
+        NOTE: this was previously inverted (1 − P(fewer) = P(opponent *could*
+        hold them), which reads "honest" as "bluff"). Fixed 2026-09-10.
+
+        Args:
+            our_copies: copies of claimed_rank in OUR hand — subtracted from
+                the unseen pool since the opponent cannot hold them.
+        """
+        remaining_rank = self.remaining_by_rank.get(claimed_rank, 0) - our_copies
         remaining_total = self.total_remaining - our_hand_size
 
         if remaining_total <= 0:
-            return 1.0
+            return 1.0 if remaining_rank < claim_size else 0.0
         if claim_size > remaining_rank:
-            return 1.0
+            return 1.0  # impossible claim
+        if opp_hand_size <= 0:
+            return 0.0
 
         p_fewer = Hypergeometric.cdf(
-            claim_size - 1, remaining_total, remaining_rank, opp_hand_size
+            claim_size - 1, remaining_total, max(0, remaining_rank), opp_hand_size
         )
-        return 1.0 - p_fewer
+        return p_fewer
+
+    def claim_plausibility(self, claimed_rank: Rank, claim_size: int,
+                           our_hand_size: int, opp_hand_size: int,
+                           our_copies: int = 0) -> float:
+        """P(the opponent CANNOT disprove OUR claim of claim_size copies).
+
+        The opponent can prove a bluff iff the unrevealed copies they see
+        (4 − revealed − their own copies) are fewer than claim_size, i.e.
+        iff their_copies > remaining_rank − claim_size.
+        Used offensively: score candidate bluffs by how likely they survive.
+        """
+        k = self.remaining_by_rank.get(claimed_rank, 0) - claim_size
+        pool_k = self.remaining_by_rank.get(claimed_rank, 0) - our_copies
+        remaining_total = self.total_remaining - our_hand_size
+
+        if k < 0:
+            return 0.0  # claim exceeds all unseen copies — always disprovable
+        if remaining_total <= 0 or opp_hand_size <= 0:
+            return 1.0 if k >= pool_k or pool_k >= claim_size else 0.5
+        if k >= pool_k:
+            return 1.0  # our own copies make the claim unimpeachable
+        return Hypergeometric.cdf(
+            k, remaining_total, max(0, pool_k), opp_hand_size
+        )
 
 
 class BayesianBot(BotInterface):
@@ -330,8 +367,8 @@ class BayesianBot(BotInterface):
                     continue  # This would be honest, skip in bluff mode
 
                 # P(opponent can't disprove this claim)
-                p_undetected = self.counter.bluff_probability(
-                    rank, claim_size, hand_size, opp_hand_size
+                p_undetected = self.counter.claim_plausibility(
+                    rank, claim_size, hand_size, opp_hand_size, have
                 )
                 p_get_away = p_undetected * (1.0 - call_freq)
 
@@ -398,8 +435,10 @@ class BayesianBot(BotInterface):
         claim_size = len(last_action.cards_played)
 
         # Card counting: P(bluff | game state)
+        our_copies = sum(1 for c in game_state.get("hand", [])
+                         if c.rank == claimed_rank)
         p_bluff_counting = self.counter.bluff_probability(
-            claimed_rank, claim_size, hand_size, opp_hand_size
+            claimed_rank, claim_size, hand_size, opp_hand_size, our_copies
         )
 
         # Opponent model: P(bluff | opponent behavior)

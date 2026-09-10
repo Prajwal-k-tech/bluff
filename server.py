@@ -32,6 +32,7 @@ from bots.random_bot import RandomBot
 from bots.honest_bot import HonestBot
 from bots.cardcount_bot import CardCountBot
 from bots.bayesian_bot import BayesianBot
+from bots.pure_nn_bot import PureNNBot
 
 # ---------------------------------------------------------------------------
 # App
@@ -56,6 +57,7 @@ BOT_CLASSES = {
     "honest": HonestBot,
     "cardcount": CardCountBot,
     "bayesian": BayesianBot,
+    "purenn": PureNNBot,
 }
 
 
@@ -148,11 +150,17 @@ class GameRoom:
         if self.ws is None:
             return
         winner = self.game.winner
+        if winner is None:
+            human_won, message = False, "Draw — turn limit reached."
+        else:
+            human_won = winner == self.human_id
+            message = "You win!" if human_won else "Bot wins!"
         await self.ws.send_json({
             "type": "game_over",
             "winner": winner,
-            "human_won": winner == self.human_id,
-            "message": "You win!" if winner == self.human_id else "Bot wins!",
+            "human_won": human_won,
+            "draw": winner is None,
+            "message": message,
         })
 
     async def send_error(self, msg: str):
@@ -176,6 +184,7 @@ class GameRoom:
             turn_number=self.game.turn_count,
             last_action=self.game.actions[-1] if self.game.actions else None,
             cards_played=self.game.get_cards_played(),
+            actions=self.game.actions,
         )
 
         cards, rank = self.bot.decide_play(bot_hand.cards, gs)
@@ -257,23 +266,22 @@ class GameRoom:
                 turn_number=self.game.turn_count,
                 last_action=self.game.actions[-1],
                 cards_played=self.game.get_cards_played(),
+                hand=self.game.get_hand(self.bot_id).cards,
+                actions=self.game.actions,
             ),
         )
 
         result_msg = ""
+        # §2: empty draw pile → bot MUST call bluff (pass is not allowed)
+        if not self.game.can_pass():
+            bot_wants_to_call = True
+
         if bot_wants_to_call:
             success, result_msg, action = self.game.call_bluff(self.bot_id)
             if action:
                 self.bot.observe_action(action, self.game.get_hand(self.human_id).size())
         else:
-            # Bot passes — draw 1 card for bot, advance turn to bot
-            if len(self.game.draw_pile) > 0:
-                drawn = self.game.draw_pile.pop(0)
-                self.game.get_hand(self.bot_id).add([drawn])
-                result_msg = f"Bot passes. (Drew 1 card.)"
-            else:
-                result_msg = "Bot passes. (Draw pile empty.)"
-            self.game._next_turn()
+            success, result_msg = self.game.pass_turn(passer=self.bot_id)
 
         if self.game.game_over:
             await self.send_game_over()
@@ -309,21 +317,25 @@ class GameRoom:
             await self.run_bot_turn()
 
     async def handle_human_pass(self):
-        """Process human passing (draw 1 card, then human plays again)."""
+        """Process human passing (draw 1 card, then human plays again).
+
+        Per game-rules.md §2: cannot pass when the draw pile is empty —
+        the player MUST call bluff instead.
+        """
         if not self.game.can_call_bluff():
             await self.send_error("Cannot pass right now.")
             return
 
-        # Human draws 1 card from draw pile
-        if len(self.game.draw_pile) > 0:
-            drawn = self.game.draw_pile.pop(0)
-            self.game.get_hand(self.human_id).add([drawn])
-            result_msg = f"You passed. Drew 1 card ({drawn})."
-        else:
-            result_msg = "You passed. Draw pile empty."
+        # §2: empty draw pile → must call bluff, pass is not allowed
+        if not self.game.can_pass():
+            await self.send_error(
+                "Cannot pass — draw pile is empty. You must call bluff."
+            )
+            return
+
+        success, result_msg = self.game.pass_turn(passer=self.human_id)
 
         self.waiting_for_human = False
-        self.game._next_turn()  # Advance turn back to human
 
         # After human passes, human plays again
         await self.send_game_state(message=result_msg, phase="play")

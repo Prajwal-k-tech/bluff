@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional
 from cards import Card, Rank
 from game import Action
+from bots.prob import Hypergeometric
 
 
 class BotInterface(ABC):
@@ -93,6 +94,114 @@ class BotInterface(ABC):
         pass
 
 
+def update_pending_claims(pending: dict, action: Action) -> None:
+    """Track claimed cards sitting unresolved in the face-down pile.
+
+    PUBLIC information only (no hidden-info leak): every uncalled play adds
+    its CLAIMED rank/count to the pile; a call reveals and resolves the whole
+    pile, clearing the pending tally.
+
+    Used to build the pool model: pool[r] = 4 − own_hand[r] − pending[r].
+    Unlike monotone "cards seen" counters, this self-heals when pile cards
+    recycle into hands after a call — the old counters hit 0 for ranks still
+    in play, which caused eternal call-war stalemates.
+    """
+    if action.bluff_called:
+        for k in list(pending.keys()):
+            pending[k] = 0
+    else:
+        pending[action.claimed_rank] = (
+            pending.get(action.claimed_rank, 0) + len(action.cards_played)
+        )
+
+
+def pending_total(pending: dict) -> int:
+    return sum(pending.values())
+
+
+def pending_claims_from_actions(actions) -> dict:
+    """Rebuild the pending-claims tally from the public action history.
+
+    The claimed rank/count of every face-down play is public information;
+    only the actual cards are hidden. A call resolves (reveals) the whole
+    pile, so the tally resets there. Derived fresh each decision — this is
+    the self-healing replacement for monotone 'cards seen' counters, which
+    broke when pile cards recycled into hands after a call.
+    """
+    pending: dict = {}
+    for action in actions:
+        update_pending_claims(pending, action)
+    return pending
+
+
+def pool_by_rank(own_hand: List[Card], pending: dict) -> dict:
+    """Copies of each rank available to {opponent hand + draw pile}.
+
+    pool[r] = 4 − copies of r in our hand − unresolved pile claims of r.
+    pool_total = 52 − our hand size − total pending claims.
+    """
+    own_counts = {rank: 0 for rank in Rank}
+    for c in own_hand:
+        if c.rank in own_counts:
+            own_counts[c.rank] += 1
+    return {rank: max(0, 4 - own_counts[rank] - pending.get(rank, 0))
+            for rank in Rank}
+
+
+def bluff_probability(own_hand: List[Card], pending: dict,
+                      last_action: Action, opp_hand_size: int) -> float:
+    """P(opponent's last claim is a bluff) under the trust-model pool.
+
+    Defensive math. The pending tally includes the play under evaluation,
+    so we subtract its claim before building the pool: the questioned cards
+    are exactly what we're testing. The opponent's hand BEFORE the play
+    (opp_hand_size + claim_size cards) is treated as drawn from the pool.
+
+    P(bluff) = P(their before-hand held fewer than claim_size copies of
+    the claimed rank) = Hypergeom CDF(claim_size − 1).
+    """
+    claim_size = len(last_action.cards_played)
+    rank = last_action.claimed_rank
+
+    pending_adj = dict(pending)
+    pending_adj[rank] = max(0, pending_adj.get(rank, 0) - claim_size)
+
+    pool = pool_by_rank(own_hand, pending_adj)
+    pool_k = pool.get(rank, 0)
+    pool_total = 52 - len(own_hand) - pending_total(pending_adj)
+    n = opp_hand_size + claim_size  # their hand size before the play
+
+    if pool_k < claim_size:
+        return 1.0  # impossible claim — not enough unseen copies
+    if pool_total <= 0:
+        return 0.0
+    n = min(n, pool_total)
+    return Hypergeometric.cdf(claim_size - 1, pool_total, pool_k, n)
+
+
+def claim_plausibility(own_hand: List[Card], pending: dict, rank: Rank,
+                       claim_size: int, opp_hand_size: int) -> float:
+    """P(the opponent CANNOT disprove our claim of claim_size copies of
+    `rank`) under the trust-model pool.
+
+    Offensive math (pre-play: our claim is not yet in `pending`). The
+    opponent can prove a bluff iff they hold more than
+    4 − pending[r] − claim_size copies themselves, so
+    P(survive) = Hypergeom CDF(4 − pending[r] − claim_size).
+    """
+    pool = pool_by_rank(own_hand, pending)
+    pool_k = pool.get(rank, 0)
+    pool_total = 52 - len(own_hand) - pending_total(pending)
+    k = 4 - pending.get(rank, 0) - claim_size
+
+    if k < 0:
+        return 0.0  # claim exceeds all unseen copies — always disprovable
+    if pool_total <= 0:
+        return 1.0 if k >= pool_k else 0.0
+    n = min(opp_hand_size, pool_total)
+    return Hypergeometric.cdf(k, pool_total, pool_k, n)
+
+
 def build_game_state(
     hand_size: int,
     opponent_hand_size: int,
@@ -101,11 +210,24 @@ def build_game_state(
     turn_number: int,
     last_action: Optional[Action] = None,
     cards_played: Optional[List[Card]] = None,
+    hand: Optional[List[Card]] = None,
+    actions: Optional[List[Action]] = None,
 ) -> dict:
     """Helper to build the game_state dict passed to bots.
 
     Used by the game engine and web adapter to construct a consistent
     state dictionary from the current GameState.
+
+    `hand` (the acting bot's own cards) is optional but recommended — the
+    documented state contract (docs/bot-modes.md) includes it, and NN bots
+    need it for state encoding when responding to a play.
+
+    `actions` (the public action history) enables the pending-claims pool
+    model: pass game.actions so probability bots can compute exact
+    "copies left among {opponent hand + draw pile}" per rank. The history
+    itself is also passed through (as `game_state["actions"]`) so bots with
+    history-derived features (e.g. PureNNBot's v5 opponent signals) observe
+    the same public information in tournaments as in training.
     """
     return {
         "hand_size": hand_size,
@@ -115,4 +237,8 @@ def build_game_state(
         "turn_number": turn_number,
         "last_action": last_action,
         "cards_played": cards_played or [],
+        "hand": hand or [],
+        "pending_claims": pending_claims_from_actions(actions)
+        if actions else {},
+        "actions": list(actions) if actions else [],
     }

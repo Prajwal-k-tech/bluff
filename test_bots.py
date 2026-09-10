@@ -6,6 +6,8 @@ Reports win rates and detects broken bots.
 
 import sys
 import os
+import random
+from functools import partial
 from typing import Optional
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -16,10 +18,18 @@ from bots.random_bot import RandomBot
 from bots.honest_bot import HonestBot
 from bots.cardcount_bot import CardCountBot
 from bots.bayesian_bot import BayesianBot
+from analysis.logger import GameLogger, TeeLogger
+
+try:
+    from bots.pure_nn_bot import PureNNBot
+    _PURENN_AVAILABLE = True
+except (ImportError, OSError):
+    _PURENN_AVAILABLE = False
 
 
 def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
-                    max_turns: int = 300) -> Optional[int]:
+                    max_turns: int = 300,
+                    logger: Optional[GameLogger] = None) -> Optional[int]:
     """Play one game between two bots. Returns winner (0=A, 1=B) or -1 draw."""
     game = GameState(num_players=2)
     game.deal(14)
@@ -51,6 +61,7 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
                 turn_number=turn,
                 last_action=game.actions[-1] if game.actions else None,
                 cards_played=game.get_cards_played(),
+                actions=game.actions,
             ),
         )
 
@@ -62,6 +73,9 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
         if not success:
             turn += 1
             continue
+
+        if logger is not None:
+            logger.log_action(game.actions[-1], game)
 
         # Other bot decides: call bluff or pass
         last_action = game.actions[-1]
@@ -75,6 +89,8 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
                 turn_number=turn,
                 last_action=last_action,
                 cards_played=game.get_cards_played(),
+                hand=game.get_hand(other).cards,
+                actions=game.actions,
             ),
         )
 
@@ -84,30 +100,62 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
                 # Both bots observe the revealed cards
                 bots[current].observe_action(action, game.get_hand(other).size())
                 bots[other].observe_action(action, game.get_hand(current).size())
+                if logger is not None:
+                    logger.log_action(action, game)
         else:
             # Pass: draw 1 card and advance turn
             if game.can_pass():
-                success, pass_msg = game.pass_turn()
+                success, pass_msg = game.pass_turn(passer=other)
+                if logger is not None:
+                    logger.log_pass(game, other)
             else:
                 # Cannot pass when draw pile empty — force call bluff
                 success, result_msg, action = game.call_bluff(other)
                 if success and action:
                     bots[current].observe_action(action, game.get_hand(other).size())
                     bots[other].observe_action(action, game.get_hand(current).size())
+                    if logger is not None:
+                        logger.log_action(action, game)
 
         turn += 1
+
+    if logger is not None:
+        logger.log_game_end(game, game.winner if game.game_over else None)
 
     return game.winner if game.game_over else -1
 
 
-def run_tournament(num_games: int = 20):
-    """Run round-robin tournament between all bots."""
+def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
+                   checkpoint: Optional[str] = None,
+                   seed: Optional[int] = None):
+    """Run round-robin tournament between all bots.
+
+    Args:
+        checkpoint: if given, PureNNBot loads this checkpoint instead of its
+            default (avoids silent random-fallback when final.pt is missing).
+        seed: if given, seeds Python's `random` (deck shuffles, RandomBot,
+            Bayesian bluff draws, PureNN fallback). Tournament path never
+            samples torch (PureNN decides deterministically), so this covers
+            all stochasticity in the harness.
+    """
+    if seed is not None:
+        random.seed(seed)
     bots = {
         "Random": RandomBot,
         "Honest": HonestBot,
         "CardCount": CardCountBot,
         "Bayesian": BayesianBot,
     }
+    if _PURENN_AVAILABLE:
+        bots["PureNN"] = (partial(PureNNBot, checkpoint_path=checkpoint)
+                           if checkpoint else PureNNBot)
+    else:
+        print("  [SKIP] PureNNBot not available (torch or checkpoint missing)")
+
+    tee = None
+    if log_path:
+        tee = TeeLogger(log_path)
+        print(f"  Logging all actions to {log_path}")
 
     names = list(bots.keys())
     wins = {name: 0 for name in names}
@@ -130,7 +178,8 @@ def run_tournament(num_games: int = 20):
             for _ in range(num_games):
                 bot_a = bots[name_a]()
                 bot_b = bots[name_b]()
-                result = play_bot_vs_bot(bot_a, bot_b)
+                logger = tee.new_game(name_a, name_b) if tee else None
+                result = play_bot_vs_bot(bot_a, bot_b, logger=logger)
 
                 if result == 0:
                     a_wins += 1
@@ -167,8 +216,20 @@ def main():
     parser = argparse.ArgumentParser(description="Bluff Bot Tournament")
     parser.add_argument("--games", type=int, default=20,
                         help="Games per matchup (default: 20)")
+    parser.add_argument("--log", type=str, default=None,
+                        help="JSONL path to log all actions "
+                             "(e.g. data/terminal/tournament.jsonl)")
+    parser.add_argument("--checkpoint", type=str, default=None,
+                        help="Checkpoint for PureNNBot "
+                             "(e.g. nn/checkpoints/v4.pt). Without it, "
+                             "PureNNBot uses its default final.pt and falls "
+                             "back to random play if missing.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed Python RNG for reproducible tournaments "
+                             "(deck shuffles + rule-bot draws).")
     args = parser.parse_args()
-    run_tournament(args.games)
+    run_tournament(args.games, log_path=args.log,
+                   checkpoint=args.checkpoint, seed=args.seed)
 
 
 if __name__ == "__main__":

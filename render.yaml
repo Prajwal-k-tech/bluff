@@ -1,0 +1,33 @@
+# Render Blueprint — Bluff backend (FastAPI + WebSocket).
+# M7 creds-free prep by Muse. Dashboard provision + env values still need the user.
+# Docs: https://render.com/docs/blueprint-spec | constraints in docs/architecture.md §4.
+
+services:
+  - type: web
+    name: bluff-backend
+    runtime: python
+    # No PYTHON_VERSION pin: code uses nothing newer than 3.11 (verified by
+    # syntax scan), so Render's default interpreter is fine.
+    buildCommand: pip install -r requirements.txt
+    # $PORT is injected by Render. Single worker: game rooms live in-memory
+    # (docs/architecture.md §3) — do NOT scale past 1 instance without sticky
+    # sessions or an external room store.
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 1
+    plan: free
+    envVars:
+      # Checkpoint override. NOTE: nn/checkpoints/ is gitignored, so a fresh
+      # Render deploy has NO weights — PureNNBot falls back to random play
+      # (warned). Default bot is `bayesian`, which needs no weights, so the
+      # deploy is fully playable regardless. Vendoring final.pt is a later
+      # user decision (S1/M7).
+      - key: BLUFF_NN_CHECKPOINT
+        value: nn/checkpoints/final.pt
+      # - key: DATABASE_URL  # Neon, when S3 wires server logging (user provisions)
+      #   sync: false        # set in dashboard, never in repo
+
+# Remaining M7 steps (need user): 1) `render blueprint launch` / dashboard create
+# from this file; 2) Vercel project for frontend/ with NEXT_PUBLIC_API_URL set to
+# the Render URL (+ NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY); 3) Neon project + apply
+# db/schema.sql, then DATABASE_URL here and in Vercel. Cold starts (~60s Render
+# free tier) are accepted per architecture.md; frontend must keep its loading
+# states (already present per M6 verify).

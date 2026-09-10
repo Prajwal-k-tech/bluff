@@ -26,6 +26,7 @@ BOT_REGISTRY = {
     "honest": ("bots.honest_bot", "HonestBot"),
     "cardcount": ("bots.cardcount_bot", "CardCountBot"),
     "bayesian": ("bots.bayesian_bot", "BayesianBot"),
+    "purenn": ("bots.pure_nn_bot", "PureNNBot"),
 }
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "saved_models")
@@ -96,6 +97,8 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
                     turn_number=turn,
                     last_action=game.actions[-1],
                     cards_played=game.get_cards_played(),
+                    hand=game.get_hand(bot_id).cards,
+                    actions=game.actions,
                 ),
             )
 
@@ -106,6 +109,7 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
                     if action:
                         bot.observe_action(action, game.get_hand(human_id).size())
             else:
+                game.pass_turn(passer=bot_id)
                 if verbose:
                     print("  Bot passes.")
 
@@ -122,6 +126,7 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
                     turn_number=turn,
                     last_action=game.actions[-1] if game.actions else None,
                     cards_played=game.get_cards_played(),
+                    actions=game.actions,
                 ),
             )
 
@@ -154,7 +159,8 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
                         bot.observe_action(action, game.get_hand(bot_id).size())
             else:
                 # Human passed — advance turn, bot observes the play
-                game.pass_turn()
+                # (draw goes to the human, who is the passer)
+                game.pass_turn(passer=human_id)
                 was_bluff = not all(c.rank == rank for c in cards)
                 action = Action(
                     player=bot_id,
@@ -169,10 +175,15 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
 
     if game.game_over:
         if verbose:
-            winner_name = "You" if game.winner == human_id else "Bot"
-            print(f"\n{'='*55}")
-            print(f"  GAME OVER — {winner_name} wins!")
-            print(f"{'='*55}")
+            if game.winner is None:
+                print(f"\n{'='*55}")
+                print(f"  GAME OVER — Draw (turn limit reached).")
+                print(f"{'='*55}")
+            else:
+                winner_name = "You" if game.winner == human_id else "Bot"
+                print(f"\n{'='*55}")
+                print(f"  GAME OVER — {winner_name} wins!")
+                print(f"{'='*55}")
         return game.winner
     else:
         if verbose:

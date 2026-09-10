@@ -141,9 +141,9 @@ const BOT_OPTIONS = [
     dotColor: "bg-ctp-peach",
   },
   {
-    id: "adaptive",
+    id: "bayesian",
     name: "Hard",
-    bot: "Adaptive",
+    bot: "Bayesian",
     difficulty: 4,
     description: "Learns your patterns — tough",
     dotColor: "bg-ctp-red",

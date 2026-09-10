@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import random
 import subprocess
 import sys
@@ -50,7 +51,7 @@ async def recv_human_turn(ws, timeout=5):
 async def test_websocket():
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "server:app", "--port", "8768"],
-        cwd="/home/prajwal/Coding/Bluff",
+        cwd=os.path.dirname(os.path.abspath(__file__)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )

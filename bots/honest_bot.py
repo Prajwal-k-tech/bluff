@@ -9,17 +9,16 @@ This is the control condition: "what happens if you never lie?"
 from typing import List, Tuple, Dict
 from cards import Card, Rank
 from game import Action
-from bots.base import BotInterface
+from bots.base import (BotInterface, pool_by_rank, pending_total,
+                       bluff_probability)
+from bots.prob import Hypergeometric
 
 
 class HonestBot(BotInterface):
     """Never bluffs. Pure honest baseline."""
 
-    def __init__(self):
-        self.cards_seen: Dict[Rank, int] = {rank: 4 for rank in Rank}
-
     def reset(self):
-        self.cards_seen = {rank: 4 for rank in Rank}
+        pass  # pool model is derived from the public action history each call
 
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
@@ -37,30 +36,25 @@ class HonestBot(BotInterface):
         return (cards, best_rank)
 
     def decide_call(self, last_action: Action, game_state: dict) -> bool:
-        """Call bluff using simple probability."""
-        claimed_rank = last_action.claimed_rank
-        claim_size = len(last_action.cards_played)
+        """Call bluff using the shared pool-model P(bluff).
 
-        remaining_rank = self.cards_seen.get(claimed_rank, 4)
-        remaining_total = sum(self.cards_seen.values())
-
-        if remaining_total == 0 or remaining_rank < claim_size:
-            return True
-
-        p_honest = remaining_rank / remaining_total
-        for i in range(1, claim_size):
-            p_honest *= (remaining_rank - i) / (remaining_total - i)
-
-        p_bluff = 1.0 - p_honest
-        return p_bluff > 0.5
+        P(bluff) = P(the opponent's before-hand held fewer than claim_size
+        copies of the claimed rank), drawn from the pool of unseen cards:
+        pool[r] = 4 − our copies of r − unresolved pile claims of r
+        (docs/bot-modes.md "pool model"). Derived fresh from the public
+        action history, so it self-heals when pile cards recycle into hands
+        after a call.
+        """
+        p_bluff = bluff_probability(
+            game_state.get("hand", []),
+            game_state.get("pending_claims", {}),
+            last_action,
+            game_state.get("opponent_hand_size", 14),
+        )
+        return p_bluff > 0.6  # conservative threshold (docs/bot-modes.md)
 
     def observe_action(self, action: Action, opponent_hand_size: int):
-        if action.bluff_called and action.caller_was_right:
-            for card in action.cards_played:
-                self.cards_seen[card.rank] = max(0, self.cards_seen.get(card.rank, 4) - 1)
-        elif not action.was_bluff:
-            for card in action.cards_played:
-                self.cards_seen[card.rank] = max(0, self.cards_seen.get(card.rank, 4) - 1)
+        pass  # pool model derives from action history; nothing to accumulate
 
     def save(self, path: str):
         pass

@@ -163,8 +163,15 @@ class GameState:
 
         return True, result_msg, last_action
 
-    def pass_turn(self) -> Tuple[bool, str]:
-        """Pass without calling bluff. Draw 1 card from draw pile."""
+    def pass_turn(self, passer: Optional[int] = None) -> Tuple[bool, str]:
+        """Pass without calling bluff. Draw 1 card from draw pile.
+
+        Args:
+            passer: The player who is passing. Defaults to the current player.
+                IMPORTANT: when the *responder* passes on the last play, pass
+                their index here — the draw must go to them, not to the
+                player who just played.
+        """
         if self.game_over:
             return False, "Game is over."
         if not self.actions:
@@ -174,10 +181,11 @@ class GameState:
         if last_action.bluff_called:
             return False, "Bluff already called."
 
-        # Draw 1 card from draw pile
+        # Draw 1 card from draw pile (to the passer, not necessarily current)
+        target = passer if passer is not None else self.current_player
         if len(self.draw_pile) > 0:
             drawn = self.draw_pile.pop(0)
-            self.hands[self.current_player].add([drawn])
+            self.hands[target].add([drawn])
             msg = f"Passed. Drew 1 card ({drawn})."
         else:
             msg = "Passed. Draw pile empty, no card drawn."
@@ -188,6 +196,10 @@ class GameState:
     def _next_turn(self):
         self.current_player = (self.current_player + 1) % self.num_players
         self.turn_count += 1
+        # §4/§6: Round limit — game is a draw if no winner after 100 turns
+        if self.turn_count >= 100:
+            self.game_over = True
+            # winner stays None → draw
 
     def display_state(self, viewer: int):
         """Display game state from a player's perspective."""

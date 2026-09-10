@@ -8,35 +8,25 @@ Differentiation from HonestBot:
 - Uses exact hypergeometric for bluff evaluation
 - Higher bluff frequency when math says it's good
 - More aggressive caller (lower threshold)
+
+Card accounting uses the pool model (docs/bot-modes.md): unresolved pile
+claims are tracked from the public action history, so counts self-heal when
+pile cards recycle into hands after a call. The old monotone "cards seen"
+counters hit zero for ranks still in play, which caused eternal call-wars.
 """
 
-import random
 from typing import List, Tuple, Dict
 from cards import Card, Rank
 from game import Action
-from bots.base import BotInterface
-from bots.prob import Hypergeometric
+from bots.base import (BotInterface, pool_by_rank, pending_total,
+                       bluff_probability, claim_plausibility)
 
 
 class CardCountBot(BotInterface):
     """Rational agent. Uses exact math for both bluffing and calling."""
 
-    def __init__(self):
-        self.remaining_by_rank: Dict[Rank, int] = {rank: 4 for rank in Rank}
-        self.total_remaining: int = 52
-        self.bluff_count = 0
-        self.call_count = 0
-
     def reset(self):
-        self.remaining_by_rank = {rank: 4 for rank in Rank}
-        self.total_remaining = 52
-
-    def _update_counts(self, cards: List[Card]):
-        """Remove cards from our tracking."""
-        for card in cards:
-            if self.remaining_by_rank[card.rank] > 0:
-                self.remaining_by_rank[card.rank] -= 1
-                self.total_remaining -= 1
+        pass  # pool model is derived from the public action history each call
 
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
@@ -48,7 +38,8 @@ class CardCountBot(BotInterface):
 
         hand_size = len(hand)
         opp_hand_size = game_state.get("opponent_hand_size", 10)
-        pile_size = game_state.get("pile_size", 0)
+        pending = game_state.get("pending_claims", {})
+        pool = pool_by_rank(hand, pending)
 
         # Score every possible (rank, claim_size) combo
         best_score = -1
@@ -66,29 +57,15 @@ class CardCountBot(BotInterface):
                 if is_honest:
                     # Honest play: score by how many cards we dump
                     score = claim_size * 0.3
-                    # Bonus if few of this rank remain (opponent can't verify)
-                    remaining = self.remaining_by_rank.get(rank, 0)
-                    if remaining <= 1:
+                    # Bonus if few copies remain unseen (hard to disprove)
+                    if pool.get(rank, 0) <= 1:
                         score += 0.5
                 else:
-                    # Bluff: only if math says it's good
-                    remaining_rank = self.remaining_by_rank.get(rank, 0)
-                    remaining_total = self.total_remaining - hand_size
-
-                    if remaining_total <= 0:
-                        score = 0.0
-                    elif claim_size > remaining_rank:
-                        # Impossible to have this many — risky bluff
-                        score = 0.1
-                    else:
-                        # P(opponent can't disprove)
-                        p_fewer = Hypergeometric.cdf(
-                            claim_size - 1, remaining_total,
-                            remaining_rank, opp_hand_size
-                        )
-                        score = p_fewer * 0.4  # Bluff quality
-
-                    self.bluff_count += 1
+                    # Bluff: P(opponent can't disprove the claim)
+                    p_survive = claim_plausibility(
+                        hand, pending, rank, claim_size, opp_hand_size
+                    )
+                    score = p_survive * 0.4  # Bluff quality
 
                 if score > best_score:
                     best_score = score
@@ -102,42 +79,20 @@ class CardCountBot(BotInterface):
         return (best_cards, best_rank)
 
     def decide_call(self, last_action: Action, game_state: dict) -> bool:
-        """Call bluff using exact hypergeometric probability."""
-        claimed_rank = last_action.claimed_rank
-        claim_size = len(last_action.cards_played)
+        """Call bluff using the shared pool-model P(bluff).
 
-        our_hand_size = game_state.get("hand_size", 0)
-        opp_hand_size = game_state.get("opponent_hand_size", 0)
-
-        remaining_rank = self.remaining_by_rank.get(claimed_rank, 0)
-        remaining_total = self.total_remaining - our_hand_size
-
-        if remaining_total <= 0:
-            return True
-
-        if claim_size > remaining_rank:
-            return True
-
-        p_fewer = Hypergeometric.cdf(
-            claim_size - 1,
-            remaining_total,
-            remaining_rank,
-            opp_hand_size,
+        Aggressive caller: lower threshold than HonestBot.
+        """
+        p_bluff = bluff_probability(
+            game_state.get("hand", []),
+            game_state.get("pending_claims", {}),
+            last_action,
+            game_state.get("opponent_hand_size", 0),
         )
-        p_bluff = 1.0 - p_fewer
-
-        # Aggressive caller: lower threshold than HonestBot
-        self.call_count += 1
         return p_bluff > 0.4
 
     def observe_action(self, action: Action, opponent_hand_size: int):
-        """Update card counts based on observed action."""
-        if action.bluff_called and action.caller_was_right:
-            self._update_counts(action.cards_played)
-        elif action.bluff_called and not action.caller_was_right:
-            self._update_counts(action.cards_played)
-        elif not action.bluff_called and not action.was_bluff:
-            self._update_counts(action.cards_played)
+        pass  # pool model derives from action history; nothing to accumulate
 
     def save(self, path: str):
         pass
