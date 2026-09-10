@@ -52,10 +52,12 @@ export default function RulesModal({ isOpen, onClose }: RulesModalProps) {
               </div>
               <button
                 onClick={onClose}
+                aria-label="Close rules"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-ctp-overlay1 transition-colors hover:bg-ctp-surface0 hover:text-ctp-text"
               >
                 <X className="h-5 w-5" />
               </button>
+
             </div>
 
             {/* Modal Body */}

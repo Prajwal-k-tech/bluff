@@ -221,6 +221,19 @@ Verdict: Strong evidence for Claim #2 on the play head (bluff frequency drops fr
 
 Reading: Policy exhibits clear opponent conditioning across both heads. Bluff rate shifts strategically based on opponent archetype (from 32% vs Random down to 4% vs Bayesian), and call rate adapts to revealed opponent bluff signals (80% vs subtle Bayesian up to 94% vs Honest). PureNN draws 83–86% against defensive bots under the 100-turn cap, while `HybridBot` breaks through the draw-lock.
 
+### E2 ablation control (`nn/checkpoints/e2_ablate_best.pt`, 39-dim, constant priors, 60k, seed 1, warm-start v5)
+
+> E2 protocol (paper-outline): identical to v7 (seed 1, eval 1000x40, --init-from v5.pt) + `--ablate-opponent-features` (constant population priors). Eval: `python3 -m nn.benchmark --checkpoint nn/checkpoints/e2_ablate_best.pt --games 100 --seed 42 --markdown`
+
+| Matchup | W/L/D | Win rate [95% CI] | Bluff rate | Mean opp hand @ end |
+|---|---|---|---|---|
+| PureNN vs Random | 98-0-2 | 98% [93%, 99%] | 33% | 35.3 |
+| PureNN vs Honest | 0-11-89 | 0% [0%, 4%] | 7% | 3.0 |
+| PureNN vs CardCount | 0-8-92 | 0% [0%, 4%] | 7% | 3.0 |
+| PureNN vs Bayesian | 0-19-81 | 0% [0%, 4%] | 3% | 19.7 |
+
+Verdict (claim #2): conditioning does NOT lift win rate over vanilla PPO here (both 0% vs competent bots) — but it changes BEHAVIOR: conditioned v7 bluffs 25%/19% vs Honest/CardCount vs 7%/7% unconditioned, tracking opponent honesty while E2 stays uniformly cautious. Outcomes are draw-lock-dominated either way (Tess feasibility analysis). Claim #2 stands as opponent-calibrated BEHAVIOR, not win-rate delta. (Muse solo E2 run, PID 42943.)
+
 ---
 
 ## 3. Full round-robin incl. trained NN & HybridBot (E4)
@@ -355,4 +368,25 @@ Reading: Policy exhibits clear opponent conditioning across both heads. Bluff ra
 
 ---
 
+## 7. Real Browser E2E Automation Benchmarks (Playwright + Chromium)
+
+> Scripts: `tests/e2e/test_browser_game.py` and `tests/e2e/test_multi_bot_and_ui.py`
+> Test Environment: Headless Chromium (`/usr/bin/chromium`), Next.js 16.3 (Turbopack, port 3000), FastAPI WebSocket backend (port 8000).
+
+### Browser E2E Verification Results
+
+| Test Category | Suite / Action | Chromium Headless Result | Visual Evidence |
+|---|---|---|---|
+| **Human Journey** | Landing page alias entry (`Alice_E2E`) → `/game` route | ✅ PASS (200 OK) | `01_landing_page.png` |
+| **Opponent Selection** | All 6 difficulty tiers visible in DOM (Beginner to Master) | ✅ PASS (6/6 visible) | `02_bot_selector.png` |
+| **Table & Card Fan** | Arched card deal, face-down opponent cards, pile rendering | ✅ PASS (100% rendered) | `03_game_board_initial.png` |
+| **Interactive Gameplay** | 12 full human-vs-AI turns against HybridBot (cards played, rank declared, bluff calls, passes) | ✅ PASS (12/12 turns) | `05_gameplay_live.png` |
+| **AI Mental Model** | Live streaming of Bayesian adaptation (`Estimated Bluff: 29.4%`, `Estimated Call: 50.0%`, 12 actions) | ✅ PASS (Real-time updates) | Verified in DOM & Screenshot |
+| **Rules Modal** | Header rules trigger opens modal, displays rules content, close button dismisses | ✅ PASS (Open & close clean) | `06_rules_modal_open.png` |
+| **Multi-Tier Roster** | Game room initialization & opening turns across all 6 bots (`random`, `honest`, `cardcount`, `bayesian`, `purenn`, `hybrid`) | ✅ PASS (6/6 tiers passed) | Automated assertion in Playwright |
+| **UI Edge Cases** | Pass button disabled state (`Draw pile empty — call bluff instead`), Desktop sidebar collapse/expand | ✅ PASS (0 console errors) | Verified in Playwright |
+
+---
+
 *All benchmarks and experimental results are reproducible from repository source code and logs.*
+

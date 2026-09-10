@@ -33,13 +33,16 @@ function GameLayout({
   children,
   username,
   onLogout,
+  onOpenRules,
   showNav = true,
 }: {
   children: React.ReactNode;
   username: string;
   onLogout: () => void;
+  onOpenRules?: () => void;
   showNav?: boolean;
 }) {
+
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-ctp-base">
       {/* Full-page Balatro shader background */}
@@ -68,9 +71,10 @@ function GameLayout({
           {showNav && (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => {}}
+                onClick={onOpenRules}
                 className="flex items-center gap-1.5 px-2 py-1.5 text-[12px] font-medium text-ctp-subtext0 transition-colors hover:text-ctp-peach"
               >
+
                 <BookOpen className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Rules</span>
               </button>
@@ -672,6 +676,7 @@ function PlayerHand({
   showSelector,
   selectorRank,
   onSelectRank,
+  onOpenSelector,
   onConfirmPlay,
   onCancelPlay,
   onCallBluff,
@@ -685,6 +690,7 @@ function PlayerHand({
   showSelector: boolean;
   selectorRank: Rank | null;
   onSelectRank: (r: Rank) => void;
+  onOpenSelector: () => void;
   onConfirmPlay: () => void;
   onCancelPlay: () => void;
   onCallBluff: () => void;
@@ -744,13 +750,14 @@ function PlayerHand({
       {/* action buttons */}
       <div className="flex items-center gap-3">
         <button
-          onClick={onConfirmPlay}
+          onClick={onOpenSelector}
           disabled={(selected.size === 0 && !showSelector) || canCallBluff}
           className="flex items-center gap-2 rounded-full bg-ctp-peach px-5 py-2.5 text-[14px] font-semibold text-ctp-base transition-all hover:brightness-110 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(250,179,135,0.3)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
         >
           <Play className="h-4 w-4" />
           Play Cards
         </button>
+
         <button
           onClick={onCallBluff}
           disabled={!canCallBluff}
@@ -1434,10 +1441,11 @@ export default function GamePage() {
         <Suspense fallback={null}>
           <ClerkIdentity onId={setClerkUserId} />
         </Suspense>
-        <GameLayout username={username || ""} onLogout={handleLogout} showNav={false}>
+        <GameLayout username={username || ""} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)} showNav={true}>
           <div className="relative z-10 flex flex-1 items-center justify-center">
             <BotSelector onSelect={handleBotSelect} />
           </div>
+          <RulesModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
         </GameLayout>
       </>
     );
@@ -1448,7 +1456,8 @@ export default function GamePage() {
       <Suspense fallback={null}>
         <ClerkIdentity onId={setClerkUserId} />
       </Suspense>
-      <GameLayout username={username || ""} onLogout={handleLogout}>
+      <GameLayout username={username || ""} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)}>
+
       <div className="flex flex-1 min-h-0 w-full overflow-hidden">
         {/* ── main game area ── */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1478,6 +1487,7 @@ export default function GamePage() {
               showSelector={showSelector}
               selectorRank={selectorRank}
               onSelectRank={setSelectorRank}
+              onOpenSelector={handlePlayClick}
               onConfirmPlay={handleConfirmPlay}
               onCancelPlay={handleCancelPlay}
               onCallBluff={handleCallBluff}
