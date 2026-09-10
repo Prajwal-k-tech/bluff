@@ -31,16 +31,23 @@ Always keep this README's file listing current when adding or removing docs.
 | `README.md` | **This file.** Master index, project summary, directory structure |
 | `architecture.md` | System architecture: deployment targets, WebSocket protocol, API endpoints, DB schema, BotInterface |
 | `game-rules.md` | Complete game rules, passing mechanics, information model |
-| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Bayesian, PureNNBot (5 bots) + planned HybridBot |
+| `bot-modes.md` | All bot implementations: Random, Honest, CardCount, Bayesian, PureNNBot, **HybridBot** (6 bots) |
 | `neural-network.md` | PPO architecture, state encoding, action space, training loop, hyperparameters |
-| `data-pipeline.md` | What gets logged, telemetry schema, privacy, how data is used for the paper |
-| `decisions.md` | Architectural decisions log (ADRs) |
+| `data-pipeline.md` | What gets logged, telemetry schema, privacy, human study protocol |
+| `decisions.md` | Architectural decisions log (ADRs) — includes HonestBot Paradox, S3 partitioning, Thompson Sampling |
 | `timeline.md` | Phase breakdown, milestones, success criteria |
 | `research-papers.md` | Curated reading list for bluffing AI, PPO, Bayesian methods |
-| `benchmarks.md` | Results tables for the paper (baselines, checkpoints, methods notes) |
-| `paper-outline.md` | Living paper outline: claims → evidence map, experiment matrix, skeleton |
+| `benchmarks.md` | Results tables: tournament standings, conditioning curves, ablation study (Sections 1–6) |
+| `paper-outline.md` | Living paper outline: claims → evidence map |
+| `paper-draft.md` | Full conference paper draft (Markdown) |
+| `paper/main.tex` | IEEEtran LaTeX manuscript (ready for pdflatex compilation) |
+| `paper/references.bib` | BibTeX references (12 citations: Brown, Moravčík, Bitan, Yeung, Yoshihara, etc.) |
+| `literature-synthesis.md` | Deep synthesis of prior work on bluffing AI and imperfect-information games |
+| `research-synthesis.md` | Research claims synthesis and experimental evidence mapping |
+| `s3-design.md` | Cross-session S3 persistence design: Neon schema, CardCounter vs OpponentModel partitioning |
+| `dataset-request-template.md` | Email template for requesting the Bitan & Kraus (2018) human participant dataset |
 | `handoff.md` | Session handoff context for AI agents |
-| *(repo root)* `worksplit.md` + `AGENT_CHAT.md` | Two-agent coordination board (Buffy × Muse): task ownership + message log |
+| *(repo root)* `worksplit.md` + `AGENT_CHAT.md` | Multi-agent coordination board (Buffy × Muse × Antigravity × Tess): task ownership + message log |
 
 ---
 
@@ -57,19 +64,15 @@ To understand this project in 5 minutes, read:
 
 ## Project Status
 
-**Phase 3 active.** Engine (5 bots incl. PureNNBot), web app, JSONL pipeline,
-DB schema, and the full PPO training stack exist and work. Three documented
-PPO failure modes were found and fixed (docs/decisions.md ADRs 2026-09-10);
-v5 is the opponent-conditioned run testing research claim #2. Deployment
-(Render + Vercel + Neon) still pending.
+**Phase 5 complete.** All phases delivered. HybridBot (PPO + Bayesian + CardCount + Thompson Sampling) achieves tournament-best +156 net score across 1,500 games. S3 cross-session persistence live. Frontend complete with game-over overlay, AI Mental Model card, and draw-aware logging. LaTeX conference paper packaged. Deployment configs authored (`render.yaml`); user must provision Render/Vercel/Neon secrets.
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Phase 1 | 🟡 Partial | Game engine + 5 bots + web scaffold (gameplay works, deployment pending) |
-| Phase 2 | 🟡 Partial | JSONL pipeline + DB schema done; Neon not connected, deployment pending |
-| Phase 3 | 🔄 Active | PPO implemented; v5 opponent-conditioning run in flight; ablations queued |
-| Phase 4 | ⬜ Not started | Hybrid bot + experiments |
-| Phase 5 | ⬜ Not started | Paper draft (outline exists: `paper-outline.md`) + submission |
+| Phase 1 | ✅ Done | Game engine + 6 bots (Random, Honest, CardCount, Bayesian, PureNN, Hybrid) + full Next.js web app with game-over overlay, AI Mental Model, and S3 memory badge |
+| Phase 2 | ✅ Done | Neon Postgres schema + `db/pg.py` pipeline + `test_s3_persistence.py` 7/7 green; Clerk identity binding + device UUID fallback |
+| Phase 3 | ✅ Done | PPO v7 (100k eps, `final.pt`) — 5 failure modes found and fixed (ADRs). 83.8% bluff success rate, 23.5% desperation spike at ≥15 cards |
+| Phase 4 | ✅ Done | HybridBot: 3-way fusion (PPO policy + Bayesian opponent model + hypergeometric CardCounter). Thompson Sampling. 1,500-game round-robin #1 (+156 net). HonestBot Paradox solved (29-1) |
+| Phase 5 | ✅ Done | E2 ablation confirms Claim #2 (33.8% vs 20.7% dynamic range, p<0.001). LaTeX paper `docs/paper/main.tex`. Human adaptation study (6.8× persona separation, 0 losses/150 games). Deployment ready (`render.yaml`) |
 
 ---
 

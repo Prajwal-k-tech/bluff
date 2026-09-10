@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { AlertTriangle, Bot, Play, ScrollText, X, BookOpen, ExternalLink, LogOut } from "lucide-react";
 import Balatro from "@/components/Balatro";
 import RulesModal from "@/components/RulesModal";
+import { useGameSounds } from "@/hooks/useGameSounds";
+
 
 function GithubIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
   return (
@@ -1103,7 +1105,9 @@ function ClerkIdentity({ onId }: { onId: (id: string | null) => void }) {
 
 export default function GamePage() {
   const router = useRouter();
+  const sounds = useGameSounds();
   const [clerkUserId, setClerkUserId] = useState<string | null>(null);
+
   const [username, setUsername] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -1171,6 +1175,7 @@ export default function GamePage() {
     const selectedIndices = Array.from(selected);
 
     if (ws && connected) {
+      sounds.play();
       ws.send(
         JSON.stringify({
           action: "play",
@@ -1183,7 +1188,7 @@ export default function GamePage() {
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [selectorRank, selected, ws, connected]);
+  }, [selectorRank, selected, ws, connected, sounds]);
 
   const handleCancelPlay = useCallback(() => {
     setShowSelector(false);
@@ -1192,21 +1197,24 @@ export default function GamePage() {
 
   const handleCallBluff = useCallback(() => {
     if (ws && connected) {
+      sounds.callBluff();
       ws.send(JSON.stringify({ action: "call_bluff" }));
     }
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [ws, connected]);
+  }, [ws, connected, sounds]);
 
   const handlePass = useCallback(() => {
     if (ws && connected) {
+      sounds.pass();
       ws.send(JSON.stringify({ action: "pass" }));
     }
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [ws, connected]);
+  }, [ws, connected, sounds]);
+
 
   const handleLogout = useCallback(() => {
     localStorage.removeItem("bluff-username");
@@ -1325,8 +1333,15 @@ export default function GamePage() {
                 setAdaptation(payload.bot_adaptation);
               }
               if (payload.message) {
-                const isBluff = payload.message.toLowerCase().includes("bluff");
-                const isHonest = payload.message.toLowerCase().includes("honest") || payload.message.toLowerCase().includes("win");
+                const msg = payload.message.toLowerCase();
+                const isBluff = msg.includes("bluff");
+                const isHonest = msg.includes("honest") || msg.includes("win");
+                // Contextual sounds based on message content
+                if (msg.includes("caught") || msg.includes("bluff! correct") || msg.includes("was a bluff")) {
+                  sounds.bluffCaught();
+                } else if (msg.includes("wrong") || msg.includes("honest play") || msg.includes("not a bluff")) {
+                  sounds.wrongCall();
+                }
                 setLogs((prev) => [
                   {
                     time: now,
@@ -1340,6 +1355,10 @@ export default function GamePage() {
               const isDraw = Boolean(payload.draw);
               const humanWon = Boolean(payload.human_won);
               const logKind: LogEntry["kind"] = isDraw ? "draw" : humanWon ? "honest" : "bluff";
+              // Game-over sound
+              if (isDraw) sounds.draw();
+              else if (humanWon) sounds.win();
+              else sounds.lose();
               setLogs((prev) => [
                 {
                   time: now,
@@ -1354,6 +1373,7 @@ export default function GamePage() {
                 message: payload.message || (isDraw ? "100-turn draw — no cards eliminated." : humanWon ? "You emptied your hand first!" : "Bot emptied its hand first."),
                 adaptation,
               });
+
             } else if (payload.type === "error") {
               setLogs((prev) => [
                 { time: now, text: `Error: ${payload.message}`, kind: "bluff" },
