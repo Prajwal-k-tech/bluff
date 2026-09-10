@@ -156,6 +156,31 @@ class StateEncoder:
 
 ## 3. Bot Implementations
 
+### Shared pool model (v2 shrinkage, 2026-09-10)
+
+HonestBot and CardCountBot share `bluff_probability()` (`bots/base.py`): the
+probability the opponent's last claim is a bluff, computed from the public
+pending-claims pool (`pool[r] = 4 − own[r] − pending[r]`).
+
+- **v1 (retired):** raw hypergeometric CDF — P(a random hand from the pool
+  couldn't hold the claim). Structurally degenerate as a caller: honest
+  multi-card dumps score ~0.67–0.93, so fixed thresholds (0.6/0.4) decayed to
+  call-everything (measured 100% call rate, zero net shedding, 100-turn draws).
+  Textbook base-rate neglect: a random-null likelihood used as a posterior
+  (see decisions.md ADR 2026-09-10; analysis in research-synthesis.md §4).
+- **v2 (current):** pool-inconsistent claims (fewer unseen copies than claimed)
+  still return 1.0 (hard evidence); otherwise
+  `P = 0.7·prior(0.20) + 0.3·CDF` — the likelihood shrunk toward the population
+  bluff base rate. Consistent claims score ≤0.44: HonestBot (0.6) now calls
+  only impossibles (documented intent restored); CardCountBot (0.4) calls only
+  CDF>0.867. `prior`/`evidence_weight` are keyword-tunable for ablations.
+- **Known gap (held):** BayesianBot's private `CardCounter` still runs v1
+  semantics (measured 61.5% call rate post-fix) — same fix pending a training-
+  distribution decision, since BayesianBot trains in v6's league. Not applied
+  mid-run.
+- Benchmarks before 2026-09-10 15:00 are NOT comparable to later ones
+  (opponent calling distribution changed); see benchmarks.md methodology.
+
 ### 3.1 RandomBot
 
 | Property | Value |

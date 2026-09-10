@@ -54,6 +54,7 @@ class GameLogger:
     def _game_start_record(self) -> dict:
         return {
             "record": "game_start",
+            "format_version": 2,
             "game_id": self.game_id,
             "source": self.source,
             "bot_mode_a": self.bot_mode_a,
@@ -62,33 +63,74 @@ class GameLogger:
         }
 
     def log_action(self, action: Action, game: GameState,
-                   player_type: str = "bot") -> None:
-        """Log a play or call action with full context.
+                   player_type: str = "bot",
+                   caller: Optional[int] = None,
+                   pile_size_at_play: Optional[int] = None) -> None:
+        """Log a play (and optionally the call against it) with full context.
 
-        Called immediately after the engine resolves the action so that
-        was_bluff / bluff_called / caller_was_right are final.
+        Format v2 (2026-09-10, fixes report.py semantics — see ADR):
+        - The PLAY is always logged as action_type="play", owned by the
+          player who played, with bluff_called/caller_was_right outcome
+          fields. (v1 merged called plays into "call" records owned by the
+          play-er, which made bluff-success trivially 100% and mislabeled
+          call accuracy — Muse catch.)
+        - If a call happened, a SECOND record action_type="call" is emitted,
+          owned by the CALLER (cards_played empty, was_bluff = whether the
+          call was right for the caller).
+
+        `caller` is the player index who called bluff (required when
+        action.bluff_called — the engine's Action doesn't record who called).
+        `pile_size_at_play` is the pile size BEFORE the call resolved; a call
+        empties the pile, so callers must pass it explicitly for the play
+        record's pile_size to reflect the stakes at decision time.
         """
         self.action_count += 1
         rec = {
             "record": "action",
+            "format_version": 2,
             "game_id": self.game_id,
             "source": self.source,
             "player_type": player_type,
             "bot_mode": (self.bot_mode_a if action.player == 0
                          else self.bot_mode_b),
-            "action_type": "call" if action.bluff_called else "play",
+            "action_type": "play",
             "cards_played": [_card_str(c) for c in action.cards_played],
             "claimed_rank": int(action.claimed_rank),
             "was_bluff": action.was_bluff,
             "bluff_called": action.bluff_called,
-            "caller_was_right": action.caller_was_right,
+            "caller_was_right": action.caller_was_right if action.bluff_called else None,
             "hand_size": game.get_hand(action.player).size(),
             "opponent_hand_size": game.get_hand(1 - action.player).size(),
-            "pile_size": game.get_pile_size(),
+            "pile_size": (pile_size_at_play if pile_size_at_play is not None
+                          else game.get_pile_size()),
             "turn_number": game.turn_count,
             "timestamp": time.time(),
         }
         self._write(rec)
+
+        if action.bluff_called and caller is not None:
+            self.action_count += 1
+            call_rec = {
+                "record": "action",
+                "format_version": 2,
+                "game_id": self.game_id,
+                "source": self.source,
+                "player_type": player_type,
+                "bot_mode": (self.bot_mode_a if caller == 0
+                             else self.bot_mode_b),
+                "action_type": "call",
+                "cards_played": [],
+                "claimed_rank": int(action.claimed_rank),
+                "was_bluff": action.caller_was_right,  # from the caller's POV
+                "bluff_called": False,
+                "caller_was_right": action.caller_was_right,
+                "hand_size": game.get_hand(caller).size(),
+                "opponent_hand_size": game.get_hand(1 - caller).size(),
+                "pile_size": 0,
+                "turn_number": game.turn_count,
+                "timestamp": time.time(),
+            }
+            self._write(call_rec)
 
     def log_pass(self, game: GameState, player: int) -> None:
         """Log a pass action (no Action object exists for passes)."""

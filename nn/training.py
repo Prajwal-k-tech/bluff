@@ -39,7 +39,7 @@ from bots.base import pending_claims_from_actions, pool_by_rank
 from nn.model import (BluffNet, build_legal_actions, decode_action_into,
                       legal_call_and_pass, CALL_ACTION, PASS_ACTION)
 from nn.state_encoder import (StateEncoder, opponent_signals_from_actions,
-                              POPULATION_PRIOR)
+                              POPULATION_PRIOR, hybrid_claim_features)
 
 # LOCKED rule (game-rules.md §1): 100 turns then draw. The old 200 let
 # degenerate policies stall twice as long per game.
@@ -103,14 +103,7 @@ class NNPlayer:
         signals = opponent_signals_from_actions(actions, seat)
         signals["my_bluff_rate"] = my_bluff_rate
         signals["my_bluff_success_rate"] = my_bluff_success
-        if self.trace_signals:
-            self.signal_trace.append({
-                "opp_call_rate": signals["opponent_call_rate"],
-                "opp_revealed_bluff": signals["opponent_bluff_revealed"],
-                "my_bluff_rate": my_bluff_rate,
-                "turn": game.turn_count,
-            })
-        return {
+        ctx = {
             "opponent_hand_size": game.get_hand(other).size(),
             "pile_size": game.get_pile_size(),
             "draw_pile_size": len(game.draw_pile),
@@ -120,6 +113,21 @@ class NNPlayer:
             "cards_remaining": remaining,
             **signals,
         }
+        if self.encoder.hybrid:
+            # v8 hybrid (ADR): structured Bayesian evidence from the shared
+            # pool math — the exact features that make Honest/CardCount sane
+            # callers, injected so the respond head doesn't have to re-derive
+            # hypergeometric comparisons end-to-end (155k-ep failed lesson).
+            ctx.update(hybrid_claim_features(
+                hand, actions, game.get_hand(other).size()))
+        if self.trace_signals:
+            self.signal_trace.append({
+                "opp_call_rate": signals["opponent_call_rate"],
+                "opp_revealed_bluff": signals["opponent_bluff_revealed"],
+                "my_bluff_rate": my_bluff_rate,
+                "turn": game.turn_count,
+            })
+        return ctx
 
     def decide_play(self, game: GameState, seat: int,
                     deterministic: bool = False):
@@ -382,6 +390,10 @@ def play_training_game(agent: NNPlayer, opponent, agent_seat: int,
         turn += 1
 
     stats["turns"] = turn
+    # End-state metric for benchmarks (shed-race margin: how many cards the
+    # opponent had left when the game ended — 0 means they shed out).
+    stats["opp_hand_end"] = game.get_hand(1 - agent_seat).size()
+    stats["agent_hand_end"] = game.get_hand(agent_seat).size()
 
     # ---- terminal reward ----
     winner = game.winner if game.game_over else -1
@@ -555,9 +567,13 @@ def evaluate(net: BluffNet, opponent: RulePlayer, num_games: int,
     return wins / max(1, num_games), bluffs / max(1, plays)
 
 
-def save_checkpoint(net: BluffNet, path: str, state_dim: int = 39,
+def save_checkpoint(net: BluffNet, path: str,
+                    state_dim: Optional[int] = None,
                     action_dim: int = 54):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if state_dim is None:
+        # Infer input dim from the net itself (v7=39, v8 hybrid=42)
+        state_dim = net.shared[0].in_features
     # Always save CPU tensors so checkpoints load on CPU-only machines
     # (web server, CI, other agents' laptops).
     torch.save({
@@ -587,7 +603,7 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
           eval_interval: int = 500, eval_games: int = 40,
           pool_size: int = 30, seed: int = 0, log_jsonl: Optional[str] = None,
           device: str = "auto", ablate_opponent_features: bool = False,
-          init_from: Optional[str] = None):
+          init_from: Optional[str] = None, hybrid: bool = False):
     """PPO training with linear entropy annealing (ADR 2026-08-11: 0.05→0.01).
 
     ent_coef is the START value; it anneals linearly to ent_coef_end across
@@ -610,18 +626,28 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
     # Claim-#2 ablation control: replace the 4 opponent-conditioning
     # features with constant population priors (v4 marginals, zero opponent
     # information) — the fair v4-comparable control run.
-    encoder = StateEncoder(use_bayesian_features=not ablate_opponent_features)
+    encoder = StateEncoder(use_bayesian_features=not ablate_opponent_features,
+                           hybrid_features=hybrid)
+    state_dim = encoder.state_dim
     if init_from:
         # Warm start (ADR 2026-09-10 "training resilience"): begin from prior
         # weights instead of scratch — used for killed-run auto-resume
         # (v7_latest) and curriculum-style runs. Three training runs (v4/v6/
         # v6.1) died silently when the spawning agent session ended; resume
-        # capability is the cheap fix.
-        net = load_checkpoint(init_from).to(dev)
-        net.train()
-        print(f"Warm-started weights from {init_from}", flush=True)
+        # capability is the cheap fix. Dim mismatch (39→42 hybrid) = fresh
+        # net: warm-start is only valid within an architecture.
+        src = load_checkpoint(init_from)
+        if src.shared[0].in_features == state_dim:
+            net = src.to(dev)
+            net.train()
+            print(f"Warm-started weights from {init_from}", flush=True)
+        else:
+            print(f"Warm-start skipped: {init_from} is "
+                  f"{src.shared[0].in_features}-dim, run needs {state_dim} "
+                  f"(hybrid={hybrid}). Training from scratch.", flush=True)
+            net = BluffNet(state_dim=state_dim).to(dev)
     else:
-        net = BluffNet().to(dev)
+        net = BluffNet(state_dim=state_dim).to(dev)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     pool = OpponentPool(pool_size)
     pool.add(net)
@@ -748,6 +774,10 @@ def main():
                         help="Warm-start from a checkpoint (auto-resume / "
                              "curriculum). Weights only; episode count "
                              "restarts at 0.")
+    parser.add_argument("--hybrid", action="store_true",
+                        help="v8: append 3 Bayesian pool-math features "
+                             "(39→42 dims) — the HybridBot thesis experiment "
+                             "(research claim #2).")
     args = parser.parse_args()
 
     train(episodes=args.episodes, output=args.output, ent_coef=args.ent_coef,
@@ -756,7 +786,7 @@ def main():
           eval_games=args.eval_games, batch_size=args.batch_size,
           seed=args.seed, log_jsonl=args.log, device=args.device,
           ablate_opponent_features=args.ablate_opponent_features,
-          init_from=args.init_from)
+          init_from=args.init_from, hybrid=args.hybrid)
 
 
 if __name__ == "__main__":

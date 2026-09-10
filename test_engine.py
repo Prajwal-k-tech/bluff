@@ -87,7 +87,10 @@ class TestPasserDrawAttribution:
 
     def test_card_goes_to_passer(self):
         g = GameState(num_players=2)
-        g.deal(14)
+        # Pin starter: this test exercises passer logic, not the deal coin
+        # flip (game-rules.md §1).
+        g.deal(14, random_start=False)
+        g.current_player = 0
         assert len(g.draw_pile) > 0
 
         # Put a known card on top of the draw pile
@@ -114,7 +117,10 @@ class TestPasserDrawAttribution:
         """Demonstrate the passer parameter matters: if current_player is 0
         but we pass passer=1, the draw goes to player 1."""
         g = GameState(num_players=2)
-        g.deal(14)
+        # Pin seat 0: this test exercises passer logic, not the deal coin
+        # flip (game-rules.md §1). Deal deterministically, then set starter.
+        g.deal(14, random_start=False)
+        g.current_player = 0
         sentinel = _make_card(Rank.KING, Suit.CLUBS)
         g.draw_pile[0] = sentinel
 
@@ -151,7 +157,9 @@ class TestPileTransferOnCallBluff:
     def test_bluff_caught_bluffer_takes_pile(self):
         """When the last play was a bluff, the bluffer takes the pile."""
         g = GameState(num_players=2)
-        g.deal(14)
+        # Pin starter: pile logic under test, not the deal coin flip.
+        g.deal(14, random_start=False)
+        g.current_player = 0
 
         # Player 0 will play a bluff: claim ACE but play a non-ACE
         hand0 = g.get_hand(0)
@@ -182,7 +190,9 @@ class TestPileTransferOnCallBluff:
     def test_wrong_caller_takes_pile(self):
         """When the caller is wrong, the caller takes the pile."""
         g = GameState(num_players=2)
-        g.deal(14)
+        # Pin starter: pile logic under test, not the deal coin flip.
+        g.deal(14, random_start=False)
+        g.current_player = 0
 
         hand0 = g.get_hand(0)
         # Find an ACE to play honestly
@@ -231,6 +241,24 @@ class TestPileTransferOnCallBluff:
         ok2, msg2, _ = g.call_bluff(other2)
         assert ok2 is False
         assert "already called" in msg2.lower()
+
+
+class TestDealCoinFlip:
+    """LOCKED game-rules.md §1: first player is a 50/50 coin flip."""
+
+    def test_random_start_off_pins_seat_zero(self):
+        g = GameState(num_players=2)
+        g.deal(14, random_start=False)
+        assert g.current_player == 0
+
+    def test_coin_flip_produces_both_starters(self):
+        starters = set()
+        for _ in range(200):
+            g = GameState(num_players=2)
+            g.deal(14)
+            assert g.current_player in (0, 1)
+            starters.add(g.current_player)
+        assert starters == {0, 1}, "200 deals never produced a starter — flip broken"
 
 
 class TestHundredTurnDraw:

@@ -149,16 +149,33 @@ def pool_by_rank(own_hand: List[Card], pending: dict) -> dict:
 
 
 def bluff_probability(own_hand: List[Card], pending: dict,
-                      last_action: Action, opp_hand_size: int) -> float:
-    """P(opponent's last claim is a bluff) under the trust-model pool.
+                      last_action: Action, opp_hand_size: int,
+                      prior: float = 0.20, evidence_weight: float = 0.30) -> float:
+    """P(opponent's last claim is a bluff) — posterior, not raw likelihood.
 
-    Defensive math. The pending tally includes the play under evaluation,
-    so we subtract its claim before building the pool: the questioned cards
-    are exactly what we're testing. The opponent's hand BEFORE the play
-    (opp_hand_size + claim_size cards) is treated as drawn from the pool.
+    v2 (2026-09-10, fixes the HonestBot call-everything degeneracy).
 
-    P(bluff) = P(their before-hand held fewer than claim_size copies of
-    the claimed rank) = Hypergeom CDF(claim_size − 1).
+    v1 returned the raw random-null likelihood: P(a uniformly random hand of
+    n pool cards would hold fewer than claim_size copies of the rank) — a
+    hypergeometric CDF. Thresholding that as a posterior is a null-
+    misspecification error: real opponents SELECT claims because they hold
+    the cards (honest play) or mimic consistency (bluffing). Under that
+    selection effect the random-hand null makes even fully honest multi-card
+    claims look "improbable" (measured: honest 2-card claim → CDF 0.67,
+    honest 3-card → 0.93), so any fixed threshold degenerated to
+    call-everything late-game (HonestBot traced at 100% call rate incl.
+    honest plays — base-rate neglect). See docs/decisions.md ADR.
+
+    v2 semantics:
+    - pool-inconsistent claim (fewer unseen copies than claimed):
+      P = 1.0 — hard evidence, strategy-independent.
+    - otherwise: P = (1−w)·prior + w·CDF, a shrunk blend of the population
+      bluff base rate (0.2) with the old likelihood as a graded evidence
+      term. Consistent claims stay below every consumer threshold
+      (Honest 0.6, CardCount 0.4) while preserving size/late-game ordering.
+
+    `prior`/`evidence_weight` are keyword-tunable for ablation (claim #2
+    experiments) and are documented in docs/bot-modes.md §pool-model.
     """
     claim_size = len(last_action.cards_played)
     rank = last_action.claimed_rank
@@ -176,7 +193,8 @@ def bluff_probability(own_hand: List[Card], pending: dict,
     if pool_total <= 0:
         return 0.0
     n = min(n, pool_total)
-    return Hypergeometric.cdf(claim_size - 1, pool_total, pool_k, n)
+    cdf = Hypergeometric.cdf(claim_size - 1, pool_total, pool_k, n)
+    return (1.0 - evidence_weight) * prior + evidence_weight * cdf
 
 
 def claim_plausibility(own_hand: List[Card], pending: dict, rank: Rank,

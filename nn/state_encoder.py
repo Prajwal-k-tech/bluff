@@ -11,7 +11,21 @@ Feature layout (docs/neural-network.md, extended v5 — ADR 2026-09-10):
     [35:39)  opponent-conditioning features (v5 — public observed signals):
              opponent_call_rate, opponent_bluff_revealed, my_bluff_rate,
              my_bluff_success_rate
-    Total: 39 dims (docs allow "~38-50"; BluffNet input dim matches this)
+    [39:42)  hybrid Bayesian features (v8 — ADR 2026-09-10, claim #2's real
+             test): p_bluff_pool (shrunk posterior for the pending claim,
+             the same math HonestBot/CardCount use), my_copies_of_claimed_rank/4,
+             claim_pool_consistent (1.0 when the claim is even possible).
+    Total: 39 dims (v4-v7 checkpoints) or 42 dims (v8+ hybrid checkpoints)
+
+v8 rationale (ADR): v4-v7 evidence (155k+ episodes) shows the respond head
+never learns endgame call policy from raw features alone — vs Honest it calls
+98% of respond decisions with 4-card junk claims (traced 2026-09-10), losing
+every decided game despite winning the shed race (OppHand@end 2.3). The claim
+counter-evidence ("I hold 3 of the claimed 4") is PRESENT in dims 0-12 + 18-30
+but PPO cannot extract the hypergeometric comparison end-to-end. The rule bots
+solve this exactly with structured probability features; feeding the same
+estimates to the net is the HybridBot thesis from docs/neural-network.md and
+the experiment Patwa 2026 left open (research-synthesis §3).
 
 v5 rationale: v4 filled opponent_call_rate with a CONSTANT 0.3, so the
 policy could not tell opponents apart — it learned the average best response
@@ -34,6 +48,7 @@ import torch
 from cards import Card, Rank
 
 STATE_DIM = 39
+STATE_DIM_HYBRID = 42  # v8: + p_bluff_pool, my_copies_of_claim, pool_consistent
 
 # Population priors (Beta(3,7) mean 0.3 for call/bluff rates; 0.5 =
 # uninformative for revealed-bluff and success rates).
@@ -89,14 +104,45 @@ def opponent_signals_from_actions(actions, viewer: int) -> dict:
     }
 
 
+def hybrid_claim_features(hand, actions, opp_hand_size: int) -> dict:
+    """Compute the 3 v8 hybrid features for the CURRENT pending claim.
+
+    Uses the shared v2 shrunk-posterior math (bots/base.bluff_probability —
+    the exact evidence HonestBot/CardCount act on) instead of having the net
+    re-derive the hypergeometric comparison end-to-end (proven unlearnable
+    in 155k+ episodes, ADR 2026-09-10). No pending claim → neutral values.
+    Legal info only: own hand + public action history + opp hand size
+    (public count, game-rules.md §5).
+    """
+    from bots.base import pending_claims_from_actions, bluff_probability
+
+    actions = [a for a in actions if a.cards_played]
+    if not actions:
+        return {"p_bluff_pool": 0.2, "my_copies_of_claim": 0.0,
+                "claim_pool_consistent": 1.0}
+    last = actions[-1]
+    pending = pending_claims_from_actions(actions)
+    p_bluff = bluff_probability(hand, pending, last, opp_hand_size)
+    claim_rank = last.claimed_rank
+    my_copies = sum(1 for c in hand if c.rank == claim_rank)
+    unseen = 4 - my_copies
+    consistent = 1.0 if len(last.cards_played) <= unseen else 0.0
+    return {"p_bluff_pool": p_bluff,
+            "my_copies_of_claim": my_copies / 4.0,
+            "claim_pool_consistent": consistent}
+
+
 class StateEncoder:
     """Encodes game state into a fixed-size feature vector."""
 
-    def __init__(self, use_bayesian_features: bool = None):
+    def __init__(self, use_bayesian_features: bool = None,
+                 hybrid_features: bool = False):
         # Per-instance override wins over the module-level switch.
         self.use_bayesian = (USE_BAYESIAN_FEATURES
                              if use_bayesian_features is None
                              else use_bayesian_features)
+        self.hybrid = hybrid_features
+        self.state_dim = STATE_DIM_HYBRID if hybrid_features else STATE_DIM
 
     def encode(self, hand: List[Card], game_state: dict) -> torch.Tensor:
         hand_counts = {rank: 0 for rank in Rank}
@@ -144,6 +190,14 @@ class StateEncoder:
         else:
             features.extend(POPULATION_PRIOR)
 
-        assert len(features) == STATE_DIM, (
-            f"Encoder produced {len(features)} dims, expected {STATE_DIM}")
+        # 3 dims — hybrid Bayesian features (v8). Provided by the caller's
+        # context (NNPlayer._context / PureNNBot._context compute them with
+        # the shared pool math). Missing keys = no pending claim → neutrals.
+        if self.hybrid:
+            features.append(game_state.get("p_bluff_pool", 0.2))
+            features.append(game_state.get("my_copies_of_claim", 0.0))
+            features.append(game_state.get("claim_pool_consistent", 1.0))
+
+        assert len(features) == self.state_dim, (
+            f"Encoder produced {len(features)} dims, expected {self.state_dim}")
         return torch.tensor(features, dtype=torch.float32)

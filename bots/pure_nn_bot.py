@@ -29,6 +29,7 @@ from nn.state_encoder import opponent_signals_from_actions, POPULATION_PRIOR
 from nn.model import (BluffNet, build_legal_actions, decode_action_into,
                       legal_call_and_pass, CALL_ACTION, PASS_ACTION)
 from nn.state_encoder import StateEncoder, STATE_DIM
+from nn.state_encoder import hybrid_claim_features
 
 DEFAULT_CHECKPOINT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -48,15 +49,16 @@ class PureNNBot(BotInterface):
         if os.path.exists(path):
             from nn.training import load_checkpoint
             self.net = load_checkpoint(path)
-            # HOTFIX by Muse 2026-09-10 (Buffy to review): encoder is now
-            # 39-dim (v5) but older checkpoints (e.g. v4.pt) hold 38-dim nets —
-            # forward would crash (mat1 1x39 vs 38x256). Degrade to the
-            # documented random fallback instead of tracebacks; proper fix is
-            # a 38-dim legacy loader path for v4-vs-v5 eval (Buffy's call).
-            if self.net.shared[0].in_features != STATE_DIM:
-                print(f"[PureNNBot] WARNING: checkpoint dim "
-                      f"{self.net.shared[0].in_features} != encoder dim "
-                      f"{STATE_DIM}; falling back to random-legal play.")
+            # Dim guard: encoder must match the checkpoint's input width.
+            # Hybrid (42-dim) checkpoints also need the hybrid encoder mode.
+            ckpt_dim = self.net.shared[0].in_features
+            if ckpt_dim == STATE_DIM:
+                self.encoder = StateEncoder()
+            elif ckpt_dim == 42:
+                self.encoder = StateEncoder(hybrid_features=True)
+            else:
+                print(f"[PureNNBot] WARNING: checkpoint dim {ckpt_dim} not "
+                      f"supported; falling back to random-legal play.")
                 self.net = None
         else:
             print(f"[PureNNBot] WARNING: checkpoint not found at {path}; "
@@ -90,7 +92,7 @@ class PureNNBot(BotInterface):
             keys = ("opponent_call_rate", "opponent_bluff_revealed",
                     "my_bluff_rate", "my_bluff_success_rate")
             signals = dict(zip(keys, POPULATION_PRIOR))
-        return {
+        ctx = {
             "opponent_hand_size": game_state.get("opponent_hand_size", 14),
             "pile_size": game_state.get("pile_size", 0),
             "draw_pile_size": game_state.get("draw_pile_size", 24),
@@ -100,6 +102,12 @@ class PureNNBot(BotInterface):
             "cards_remaining": self._remaining_counts(hand, game_state),
             **signals,
         }
+        if self.encoder.hybrid:
+            # v8 hybrid: same structured pool-math evidence as training
+            # (deployment parity — Muse's actions-wiring lesson applies).
+            ctx.update(hybrid_claim_features(
+                hand, actions, game_state.get("opponent_hand_size", 14)))
+        return ctx
 
     def _act(self, hand: List[Card], game_state: dict, can_call: bool,
              can_pass: bool, respond_only: bool = False) -> int:

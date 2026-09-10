@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useUser } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "motion/react";
 import { AlertTriangle, Bot, Play, ScrollText, X, BookOpen, ExternalLink, LogOut } from "lucide-react";
 import Balatro from "@/components/Balatro";
@@ -148,6 +149,22 @@ const BOT_OPTIONS = [
     description: "Learns your patterns — tough",
     dotColor: "bg-ctp-red",
   },
+  {
+    id: "purenn",
+    name: "Expert",
+    bot: "PureNN",
+    difficulty: 5,
+    description: "Deep RL policy — high skill",
+    dotColor: "bg-ctp-mauve",
+  },
+  {
+    id: "hybrid",
+    name: "Master",
+    bot: "Hybrid",
+    difficulty: 6,
+    description: "NN + Bayesian adaptation — supreme",
+    dotColor: "bg-ctp-sapphire",
+  },
 ] as const;
 
 function BotSelector({
@@ -240,7 +257,21 @@ interface CardData {
 interface LogEntry {
   time: string;
   text: string;
-  kind?: "bluff" | "honest" | "normal";
+  kind?: "bluff" | "honest" | "normal" | "draw";
+}
+
+interface GameOverResult {
+  humanWon: boolean;
+  isDraw: boolean;
+  message: string;
+  adaptation: BotAdaptation | null;
+}
+
+interface BotAdaptation {
+  estimated_bluff_rate: number;
+  estimated_call_frequency: number;
+  actions_observed: number;
+  model_loaded: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -726,13 +757,21 @@ function PlayerHand({
           <AlertTriangle className="h-4 w-4" />
           Call Bluff!
         </button>
-        <button
-          onClick={onPass}
-          disabled={!canPass}
-          className="flex items-center gap-2 rounded-full border border-ctp-surface1 bg-ctp-surface0/50 px-5 py-2.5 text-[14px] font-medium text-ctp-subtext0 transition-all hover:-translate-y-0.5 hover:border-ctp-overlay1 hover:text-ctp-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
-        >
-          Pass
-        </button>
+        <div className="relative group">
+          <button
+            onClick={onPass}
+            disabled={!canPass}
+            className="flex items-center gap-2 rounded-full border border-ctp-surface1 bg-ctp-surface0/50 px-5 py-2.5 text-[14px] font-medium text-ctp-subtext0 transition-all hover:-translate-y-0.5 hover:border-ctp-overlay1 hover:text-ctp-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+          >
+            Pass
+          </button>
+          {!canPass && (
+            <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-ctp-surface1/60 bg-ctp-mantle/95 px-2.5 py-1 text-[11px] text-ctp-overlay1 opacity-0 shadow-lg backdrop-blur-sm transition-opacity group-hover:opacity-100">
+              Draw pile empty — call bluff instead
+            </div>
+          )}
+        </div>
+
       </div>
 
       {/* rank selector */}
@@ -751,6 +790,101 @@ function PlayerHand({
 }
 
 // ---------------------------------------------------------------------------
+// GameOverOverlay
+// ---------------------------------------------------------------------------
+
+function GameOverOverlay({
+  result,
+  onPlayAgain,
+}: {
+  result: GameOverResult;
+  onPlayAgain: () => void;
+}) {
+  const { humanWon, isDraw, message, adaptation } = result;
+
+  const headline = isDraw
+    ? "Draw!"
+    : humanWon
+      ? "You Won! 🎉"
+      : "Bot Wins!";
+
+  const subColor = isDraw
+    ? "text-ctp-yellow"
+    : humanWon
+      ? "text-ctp-green"
+      : "text-ctp-red";
+
+  const glowColor = isDraw
+    ? "shadow-[0_0_60px_rgba(249,226,175,0.12)]"
+    : humanWon
+      ? "shadow-[0_0_60px_rgba(166,227,161,0.12)]"
+      : "shadow-[0_0_60px_rgba(243,139,168,0.12)]";
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {/* backdrop */}
+      <div className="absolute inset-0 bg-ctp-crust/70 backdrop-blur-md" />
+
+      {/* panel */}
+      <motion.div
+        className={`relative z-10 w-[320px] max-w-[90vw] rounded-2xl border border-ctp-surface1/60 bg-ctp-mantle/95 p-6 text-center ${glowColor}`}
+        initial={{ scale: 0.88, y: 20, opacity: 0 }}
+        animate={{ scale: 1, y: 0, opacity: 1 }}
+        transition={{ type: "spring", damping: 22, stiffness: 260, delay: 0.05 }}
+      >
+        {/* result headline */}
+        <p className={`text-[32px] font-bold leading-tight ${subColor}`}>
+          {headline}
+        </p>
+        <p className="mt-2 text-[13px] text-ctp-subtext0 leading-snug">
+          {message}
+        </p>
+
+        {/* bot adaptation summary if available */}
+        {adaptation && (
+          <div className="mt-4 rounded-xl border border-ctp-lavender/25 bg-ctp-surface0/60 p-3 text-left">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
+              AI Mental Model — Final State
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-[12px]">
+              <div>
+                <span className="text-[10px] text-ctp-overlay0 block">Est. Bluff Rate</span>
+                <span className="font-semibold text-ctp-peach">
+                  {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-ctp-overlay0 block">Est. Call Rate</span>
+                <span className="font-semibold text-ctp-teal">
+                  {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
+                </span>
+              </div>
+            </div>
+            <p className="mt-1.5 text-[10px] text-ctp-overlay1">
+              Built from {adaptation.actions_observed} observed action{adaptation.actions_observed !== 1 ? "s" : ""}
+              {adaptation.model_loaded ? " · Saved to S3 memory" : ""}
+            </p>
+          </div>
+        )}
+
+        {/* play again */}
+        <button
+          onClick={onPlayAgain}
+          className="mt-5 w-full rounded-full bg-ctp-peach py-2.5 text-[14px] font-semibold text-ctp-base transition-all hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0"
+        >
+          Play Again
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // GameLogSidebar
 // ---------------------------------------------------------------------------
 
@@ -760,12 +894,15 @@ function GameLogSidebar({
   onToggleCollapse,
   onClose,
   logs,
+  adaptation,
 }: {
+
   open: boolean;
   collapsed: boolean;
   onToggleCollapse: () => void;
   onClose: () => void;
   logs: LogEntry[];
+  adaptation?: BotAdaptation | null;
 }) {
   return (
     <>
@@ -788,6 +925,38 @@ function GameLogSidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 w-[280px]">
+          {adaptation && (
+            <div className="mb-3 rounded-lg border border-ctp-lavender/30 bg-ctp-surface0/60 p-2.5 text-left">
+              <div className="flex items-center justify-between pb-1.5 border-b border-ctp-surface1/40">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
+                  AI Mental Model
+                </span>
+                {adaptation.model_loaded && (
+                  <span className="rounded bg-ctp-green/20 px-1 py-0.5 text-[9px] font-medium text-ctp-green">
+                    S3 Memory
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-[10px] text-ctp-overlay0 block">Estimated Bluff</span>
+                  <span className="font-semibold text-ctp-peach">
+                    {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-ctp-overlay0 block">Estimated Call</span>
+                  <span className="font-semibold text-ctp-teal">
+                    {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+              <div className="mt-1.5 text-[10px] text-ctp-overlay1">
+                Learned from {adaptation.actions_observed} action{adaptation.actions_observed !== 1 ? "s" : ""}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
             {logs.map((entry, i) => (
               <div key={i}>
@@ -801,7 +970,9 @@ function GameLogSidebar({
                       ? "font-semibold text-ctp-red"
                       : entry.kind === "honest"
                         ? "text-ctp-green"
-                        : "text-ctp-subtext0",
+                        : entry.kind === "draw"
+                          ? "font-semibold text-ctp-yellow"
+                          : "text-ctp-subtext0",
                   ].join(" ")}
                 >
                   {entry.text}
@@ -849,6 +1020,38 @@ function GameLogSidebar({
               </div>
 
               <div className="flex-1 overflow-y-auto px-4 py-3">
+                {adaptation && (
+                  <div className="mb-3 rounded-lg border border-ctp-lavender/30 bg-ctp-surface1/60 p-2.5 text-left">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-ctp-surface2/40">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
+                        AI Mental Model
+                      </span>
+                      {adaptation.model_loaded && (
+                        <span className="rounded bg-ctp-green/20 px-1 py-0.5 text-[9px] font-medium text-ctp-green">
+                          S3 Memory
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-[10px] text-ctp-overlay0 block">Estimated Bluff</span>
+                        <span className="font-semibold text-ctp-peach">
+                          {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-ctp-overlay0 block">Estimated Call</span>
+                        <span className="font-semibold text-ctp-teal">
+                          {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-ctp-overlay1">
+                      Learned from {adaptation.actions_observed} action{adaptation.actions_observed !== 1 ? "s" : ""}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-3">
                   {logs.map((entry, i) => (
                     <div key={i}>
@@ -862,7 +1065,9 @@ function GameLogSidebar({
                             ? "font-semibold text-ctp-red"
                             : entry.kind === "honest"
                               ? "text-ctp-green"
-                              : "text-ctp-subtext0",
+                              : entry.kind === "draw"
+                                ? "font-semibold text-ctp-yellow"
+                                : "text-ctp-subtext0",
                         ].join(" ")}
                       >
                         {entry.text}
@@ -883,8 +1088,22 @@ function GameLogSidebar({
 // Page
 // ---------------------------------------------------------------------------
 
+// Reports the Clerk identity WITHOUT suspending the page tree: while Clerk
+// is still loading (or unreachable, e.g. blocked identity domain), this
+// renders null and callers fall back to the device UUID. When Clerk
+// resolves, rooms created afterwards upgrade to the Clerk id.
+function ClerkIdentity({ onId }: { onId: (id: string | null) => void }) {
+  const { user } = useUser();
+  const id = user?.id ?? null;
+  useEffect(() => {
+    onId(id);
+  }, [id, onId]);
+  return null;
+}
+
 export default function GamePage() {
   const router = useRouter();
+  const [clerkUserId, setClerkUserId] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -906,6 +1125,7 @@ export default function GamePage() {
   const [playedCount, setPlayedCount] = useState(1);
   const [canCallBluff, setCanCallBluff] = useState(false);
   const [canPass, setCanPass] = useState(false);
+  const [adaptation, setAdaptation] = useState<BotAdaptation | null>(null);
 
   const [logOpen, setLogOpen] = useState(false);
   const [logCollapsed, setLogCollapsed] = useState(false);
@@ -914,6 +1134,8 @@ export default function GamePage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [gameOver, setGameOver] = useState<GameOverResult | null>(null);
+
 
   // ── auth check ──
   useEffect(() => {
@@ -996,6 +1218,26 @@ export default function GamePage() {
     setBotSelected(true);
   }, []);
 
+  const handlePlayAgain = useCallback(() => {
+    // Close the overlay and close the current socket — re-selecting bot triggers a fresh connection
+    setGameOver(null);
+    if (ws) ws.close();
+    setWs(null);
+    setConnected(false);
+    setBotSelected(false);
+    setSelectedBot(null);
+    setHand([]);
+    setSelected(new Set());
+    setLogs([]);
+    setAdaptation(null);
+    setPileCount(0);
+    setDeckCount(28);
+    setRound(1);
+    setBotCards(14);
+    setCanCallBluff(false);
+    setCanPass(false);
+  }, [ws]);
+
   // ── Connect to WebSocket after bot selected ──
   useEffect(() => {
     if (!botSelected || !selectedBot) return;
@@ -1003,9 +1245,23 @@ export default function GamePage() {
     let socket: WebSocket | null = null;
     let isMounted = true;
 
+    const getStableUserId = () => {
+      if (clerkUserId) return clerkUserId;
+      if (typeof window === "undefined") return "";
+      let localId = localStorage.getItem("bluff_device_id");
+      if (!localId) {
+        localId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `anon_${Date.now()}_${Math.random()}`;
+        localStorage.setItem("bluff_device_id", localId);
+      }
+      return localId;
+    };
+
     async function initWs() {
       try {
-        const res = await fetch(`${API_URL}/rooms?bot_name=${selectedBot}`, {
+        const stableId = getStableUserId();
+        const queryParam = stableId ? `&user_id=${encodeURIComponent(stableId)}` : "";
+        const wsParam = stableId ? `?user_id=${encodeURIComponent(stableId)}` : "";
+        const res = await fetch(`${API_URL}/rooms?bot_name=${selectedBot}${queryParam}`, {
           method: "POST",
         });
         if (!res.ok) return;
@@ -1013,7 +1269,7 @@ export default function GamePage() {
         const roomId = data.room_id;
         if (!roomId) return;
 
-        socket = new WebSocket(`${WS_URL}/ws/${roomId}`);
+        socket = new WebSocket(`${WS_URL}/ws/${roomId}${wsParam}`);
 
         socket.onopen = () => {
           if (!isMounted) return;
@@ -1065,6 +1321,9 @@ export default function GamePage() {
                 setClaimedBy(la.player === 0 ? "You" : "Bot");
                 setPlayedCount(la.cards?.length || 1);
               }
+              if (payload.bot_adaptation) {
+                setAdaptation(payload.bot_adaptation);
+              }
               if (payload.message) {
                 const isBluff = payload.message.toLowerCase().includes("bluff");
                 const isHonest = payload.message.toLowerCase().includes("honest") || payload.message.toLowerCase().includes("win");
@@ -1078,14 +1337,23 @@ export default function GamePage() {
                 ]);
               }
             } else if (payload.type === "game_over") {
+              const isDraw = Boolean(payload.draw);
+              const humanWon = Boolean(payload.human_won);
+              const logKind: LogEntry["kind"] = isDraw ? "draw" : humanWon ? "honest" : "bluff";
               setLogs((prev) => [
                 {
                   time: now,
-                  text: payload.message || "Game Over!",
-                  kind: payload.human_won ? "honest" : "bluff",
+                  text: payload.message || (isDraw ? "Draw — 100-turn limit reached." : humanWon ? "You won!" : "Bot wins!"),
+                  kind: logKind,
                 },
                 ...prev,
               ]);
+              setGameOver({
+                humanWon,
+                isDraw,
+                message: payload.message || (isDraw ? "100-turn draw — no cards eliminated." : humanWon ? "You emptied your hand first!" : "Bot emptied its hand first."),
+                adaptation,
+              });
             } else if (payload.type === "error") {
               setLogs((prev) => [
                 { time: now, text: `Error: ${payload.message}`, kind: "bluff" },
@@ -1118,32 +1386,49 @@ export default function GamePage() {
   // ── loading ──
   if (checking) {
     return (
-      <div className="flex h-screen items-center justify-center bg-ctp-base">
-        <motion.p
-          className="text-[14px] text-ctp-subtext0"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: [0.4, 1, 0.4] }}
-          transition={{ duration: 1.6, repeat: Infinity }}
-        >
-          Loading…
-        </motion.p>
-      </div>
+      // HOTFIX by Tess 2026-09-10: two sibling JSX roots (Suspense + div) made
+      // the module unparseable ("Expected ',', got 'ident'" @1246) — wrapped in
+      // a fragment. Owner (Muse/Antigravity) review requested on AGENT_CHAT.
+      <>
+        <Suspense fallback={null}>
+          <ClerkIdentity onId={setClerkUserId} />
+        </Suspense>
+        <div className="flex h-screen items-center justify-center bg-ctp-base">
+          <motion.p
+            className="text-[14px] text-ctp-subtext0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0.4, 1, 0.4] }}
+            transition={{ duration: 1.6, repeat: Infinity }}
+          >
+            Loading…
+          </motion.p>
+        </div>
+      </>
     );
   }
 
   // ── bot selection screen ──
   if (!botSelected) {
     return (
-      <GameLayout username={username || ""} onLogout={handleLogout} showNav={false}>
-        <div className="relative z-10 flex flex-1 items-center justify-center">
-          <BotSelector onSelect={handleBotSelect} />
-        </div>
-      </GameLayout>
+      <>
+        <Suspense fallback={null}>
+          <ClerkIdentity onId={setClerkUserId} />
+        </Suspense>
+        <GameLayout username={username || ""} onLogout={handleLogout} showNav={false}>
+          <div className="relative z-10 flex flex-1 items-center justify-center">
+            <BotSelector onSelect={handleBotSelect} />
+          </div>
+        </GameLayout>
+      </>
     );
   }
 
   return (
-    <GameLayout username={username || ""} onLogout={handleLogout}>
+    <>
+      <Suspense fallback={null}>
+        <ClerkIdentity onId={setClerkUserId} />
+      </Suspense>
+      <GameLayout username={username || ""} onLogout={handleLogout}>
       <div className="flex flex-1 min-h-0 w-full overflow-hidden">
         {/* ── main game area ── */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1190,6 +1475,7 @@ export default function GamePage() {
           onToggleCollapse={() => setLogCollapsed(!logCollapsed)}
           onClose={() => setLogCollapsed(true)}
           logs={logs}
+          adaptation={adaptation}
         />
       </div>
 
@@ -1213,6 +1499,13 @@ export default function GamePage() {
       >
         <ScrollText className="h-4 w-4" />
       </button>
+      {/* ── Game Over Overlay ── */}
+      <AnimatePresence>
+        {gameOver && (
+          <GameOverOverlay result={gameOver} onPlayAgain={handlePlayAgain} />
+        )}
+      </AnimatePresence>
     </GameLayout>
+    </>
   );
 }

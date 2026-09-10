@@ -223,3 +223,17 @@ def test_session_end_survives_missing_session():
     from db import pg
     # Best-effort contract: unknown session id must not raise
     asyncio.run(pg.log_session_end(str(uuid.uuid4()), "win", 5, 30))
+
+
+def test_hybrid_bot_serialization_roundtrip():
+    from bots.hybrid_bot import HybridBot
+    bot = HybridBot()
+    play_some_bluffy_games(bot, human_bluff_rate=0.75, games=3)
+    d = bot.to_dict()
+    assert "model" in d
+    assert "bluff_tracker" in d
+    assert "call_threshold" in d
+
+    loaded = HybridBot.from_dict(d)
+    assert loaded.model.total_actions_observed == bot.model.total_actions_observed
+    assert abs(loaded.model.estimate_call_frequency() - bot.model.estimate_call_frequency()) < 1e-9

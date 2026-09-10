@@ -48,7 +48,7 @@ async def recv_human_turn(ws, timeout=5):
         return msg
 
 
-async def test_websocket():
+async def _websocket_impl():
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "server:app", "--port", "8768"],
         cwd=os.path.dirname(os.path.abspath(__file__)),
@@ -71,13 +71,13 @@ async def test_websocket():
         assert "bayesian" in bots["bots"]
         print(f"[OK] GET /bots: {bots['bots']}")
 
-        req = urllib.request.Request("http://localhost:8768/rooms?bot_name=random", method="POST")
+        req = urllib.request.Request("http://localhost:8768/rooms?bot_name=bayesian&user_id=clerk_user_test_123", method="POST")
         room = json.loads(urllib.request.urlopen(req).read())
         room_id = room["room_id"]
-        print(f"[OK] POST /rooms: {room_id}")
+        print(f"[OK] POST /rooms with user_id: {room_id}")
 
-        # Play a full game
-        async with websockets.connect(f"ws://localhost:8768/ws/{room_id}") as ws:
+        # Play a full game with stable user_id query param
+        async with websockets.connect(f"ws://localhost:8768/ws/{room_id}?user_id=clerk_user_test_123") as ws:
             msg = await recv_human_turn(ws)
             assert msg["type"] == "game_state"
             assert msg["hand_size"] == 14
@@ -132,6 +132,42 @@ async def test_websocket():
                 assert msg2["hand_size"] == 14
                 print("[OK] New game works")
 
+        # Test HybridBot with live bot_adaptation streaming
+        req_hybrid = urllib.request.Request(
+            "http://localhost:8768/rooms?bot_name=hybrid&user_id=clerk_user_test_hybrid_456",
+            method="POST"
+        )
+        room_hybrid = json.loads(urllib.request.urlopen(req_hybrid).read())
+        hybrid_room_id = room_hybrid["room_id"]
+        print(f"[OK] POST /rooms with hybrid bot: {hybrid_room_id}")
+
+        async with websockets.connect(f"ws://localhost:8768/ws/{hybrid_room_id}?user_id=clerk_user_test_hybrid_456") as ws_h:
+            msg_h = await recv_human_turn(ws_h)
+            assert msg_h["type"] == "game_state"
+            assert "bot_adaptation" in msg_h
+            adapt = msg_h["bot_adaptation"]
+            assert adapt is not None, "HybridBot must return bot_adaptation payload"
+            assert 0.0 <= adapt["estimated_bluff_rate"] <= 1.0
+            assert 0.0 <= adapt["estimated_call_frequency"] <= 1.0
+            assert isinstance(adapt["actions_observed"], int)
+            print(f"[OK] HybridBot adaptation payload verified: {adapt}")
+
+            # Play 5 turns against HybridBot
+            for _ in range(5):
+                if msg_h.get("type") in ("game_over", "error"):
+                    break
+                phase = msg_h.get("phase", "")
+                if phase == "play":
+                    hand = msg_h["hand"]
+                    if not hand:
+                        break
+                    rank = hand[0]["rank"]
+                    await ws_h.send(json.dumps({"action": "play", "cards": [0], "rank": rank}))
+                elif phase == "call_or_pass":
+                    await ws_h.send(json.dumps({"action": "pass"}))
+                msg_h = await recv_human_turn(ws_h)
+            print("[OK] HybridBot WebSocket interaction verified")
+
         print("\n=== ALL TESTS PASSED ===")
         return True
 
@@ -145,6 +181,15 @@ async def test_websocket():
         proc.wait(timeout=5)
 
 
+def test_websocket():
+    """Pytest-compatible sync entry point (the file has no async plugin).
+
+    Runs the full integration flow (spawns uvicorn, plays a WS game).
+    Standalone equivalent: `python3 test_server.py`.
+    """
+    assert asyncio.run(_websocket_impl()) is True
+
+
 if __name__ == "__main__":
-    success = asyncio.run(test_websocket())
+    success = asyncio.run(_websocket_impl())
     sys.exit(0 if success else 1)

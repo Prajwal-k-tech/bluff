@@ -1,5 +1,6 @@
 """Game state and turn logic for 2-player Bluff."""
 
+import random
 from typing import List, Optional, Tuple
 from cards import Card, Deck, Hand, Rank
 
@@ -41,13 +42,19 @@ class GameState:
         self.actions: List[Action] = []  # full game history
         self.cards_played: List[Card] = []  # all cards that left hands (for card counting)
 
-    def deal(self, cards_per_player: int = 14):
-        """Deal cards to all players. Remaining cards form the draw pile."""
+    def deal(self, cards_per_player: int = 14, random_start: bool = True):
+        """Deal cards to all players. Remaining cards form the draw pile.
+
+        LOCKED game-rules.md §1: the first player is a 50/50 coin flip.
+        Pass random_start=False only for deterministic unit tests.
+        """
         for i in range(self.num_players):
             cards = self.deck.deal(cards_per_player)
             self.hands[i].add(cards)
         # Remaining deck becomes the draw pile
         self.draw_pile = self.deck.deal(self.deck.remaining())
+        if random_start:
+            self.current_player = random.randrange(self.num_players)
 
     def get_hand(self, player: int) -> Hand:
         return self.hands[player]

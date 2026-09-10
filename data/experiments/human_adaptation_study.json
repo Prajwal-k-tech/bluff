@@ -1,0 +1,143 @@
+{
+  "Aggressive Bluffer": [
+    {
+      "session": 1,
+      "wins": 3,
+      "losses": 0,
+      "draws": 7,
+      "learned_bluff": 0.2563,
+      "learned_call": 0.8594,
+      "actions_observed": 638
+    },
+    {
+      "session": 2,
+      "wins": 1,
+      "losses": 0,
+      "draws": 9,
+      "learned_bluff": 0.2532,
+      "learned_call": 0.8671,
+      "actions_observed": 1428
+    },
+    {
+      "session": 3,
+      "wins": 1,
+      "losses": 0,
+      "draws": 9,
+      "learned_bluff": 0.2587,
+      "learned_call": 0.8687,
+      "actions_observed": 2245
+    },
+    {
+      "session": 4,
+      "wins": 0,
+      "losses": 0,
+      "draws": 10,
+      "learned_bluff": 0.2566,
+      "learned_call": 0.8715,
+      "actions_observed": 3110
+    },
+    {
+      "session": 5,
+      "wins": 0,
+      "losses": 0,
+      "draws": 10,
+      "learned_bluff": 0.2601,
+      "learned_call": 0.8748,
+      "actions_observed": 3967
+    }
+  ],
+  "Honest Conservative": [
+    {
+      "session": 1,
+      "wins": 2,
+      "losses": 0,
+      "draws": 8,
+      "learned_bluff": 0.0403,
+      "learned_call": 0.8464,
+      "actions_observed": 727
+    },
+    {
+      "session": 2,
+      "wins": 3,
+      "losses": 0,
+      "draws": 7,
+      "learned_bluff": 0.0381,
+      "learned_call": 0.8346,
+      "actions_observed": 1407
+    },
+    {
+      "session": 3,
+      "wins": 5,
+      "losses": 0,
+      "draws": 5,
+      "learned_bluff": 0.0387,
+      "learned_call": 0.8267,
+      "actions_observed": 1960
+    },
+    {
+      "session": 4,
+      "wins": 3,
+      "losses": 0,
+      "draws": 7,
+      "learned_bluff": 0.0387,
+      "learned_call": 0.828,
+      "actions_observed": 2614
+    },
+    {
+      "session": 5,
+      "wins": 2,
+      "losses": 0,
+      "draws": 8,
+      "learned_bluff": 0.0384,
+      "learned_call": 0.8309,
+      "actions_observed": 3346
+    }
+  ],
+  "Desperation Bluffer": [
+    {
+      "session": 1,
+      "wins": 1,
+      "losses": 0,
+      "draws": 9,
+      "learned_bluff": 0.0639,
+      "learned_call": 0.852,
+      "actions_observed": 802
+    },
+    {
+      "session": 2,
+      "wins": 6,
+      "losses": 0,
+      "draws": 4,
+      "learned_bluff": 0.0647,
+      "learned_call": 0.8338,
+      "actions_observed": 1346
+    },
+    {
+      "session": 3,
+      "wins": 1,
+      "losses": 0,
+      "draws": 9,
+      "learned_bluff": 0.0646,
+      "learned_call": 0.8398,
+      "actions_observed": 2151
+    },
+    {
+      "session": 4,
+      "wins": 2,
+      "losses": 0,
+      "draws": 8,
+      "learned_bluff": 0.0689,
+      "learned_call": 0.8427,
+      "actions_observed": 2954
+    },
+    {
+      "session": 5,
+      "wins": 4,
+      "losses": 0,
+      "draws": 6,
+      "learned_bluff": 0.0629,
+      "learned_call": 0.8384,
+      "actions_observed": 3538
+    }
+  ]
+}

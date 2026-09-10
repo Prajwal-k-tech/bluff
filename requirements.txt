@@ -4,6 +4,7 @@ pydantic>=2.0.0
 PyJWT>=2.8.0
 bcrypt>=4.1.0
 python-multipart>=0.0.6
+asyncpg>=0.29.0  # Neon Postgres driver for S3 web logging (server.py)
 # CPU-only torch for the deployed backend (PureNNBot imports torch at server
 # startup; CUDA wheels exceed free-tier disk). Local training uses the same
 # CPU build (torch 2.14.0+cpu); GPU runs pass --device explicitly.

@@ -29,6 +29,10 @@ class BetaDistribution:
     def mean(self) -> float:
         return self.alpha / (self.alpha + self.beta)
 
+    def sample(self) -> float:
+        """Draw a sample from the Beta posterior (Thompson Sampling)."""
+        return random.betavariate(max(1e-3, self.alpha), max(1e-3, self.beta))
+
     def update(self, was_bluff: bool):
         if was_bluff:
             self.alpha += 1
@@ -44,7 +48,7 @@ class BetaDistribution:
 
 
 class OpponentModel:
-    """Bayesian opponent model using Beta distributions."""
+    """Bayesian opponent model using Beta distributions with hierarchical shrinkage."""
 
     def __init__(self):
         self.bluff_by_hand_size: Dict[int, BetaDistribution] = {
@@ -57,6 +61,7 @@ class OpponentModel:
             i: BetaDistribution() for i in range(1, 5)
         }
         self.call_frequency = BetaDistribution()
+        self.overall_bluff = BetaDistribution(alpha=1.0, beta=4.0)  # prior base rate ~20%
         self.total_actions_observed = 0
 
     def observe_action(self, action: Action, opponent_hand_size: int):
@@ -70,6 +75,8 @@ class OpponentModel:
         if not action.cards_played:
             self.call_frequency.update(action.bluff_called)
             return
+
+        self.overall_bluff.update(action.was_bluff)
 
         hs = min(opponent_hand_size, 26)
         if hs not in self.bluff_by_hand_size:
@@ -95,30 +102,80 @@ class OpponentModel:
 
         hs = min(hand_size, 26)
         if hs in self.bluff_by_hand_size:
-            estimates.append(self.bluff_by_hand_size[hs].mean())
-            weights.append(2.0)
+            dist = self.bluff_by_hand_size[hs]
+            if (dist.alpha + dist.beta) > 2.0:
+                estimates.append(dist.mean())
+                weights.append(2.0)
 
         if claimed_rank in self.bluff_by_rank:
-            estimates.append(self.bluff_by_rank[claimed_rank].mean())
-            weights.append(1.5)
+            dist = self.bluff_by_rank[claimed_rank]
+            if (dist.alpha + dist.beta) > 2.0:
+                estimates.append(dist.mean())
+                weights.append(1.5)
 
         cs = min(claim_size, 4)
         if cs in self.bluff_by_claim_size:
-            estimates.append(self.bluff_by_claim_size[cs].mean())
-            weights.append(1.0)
+            dist = self.bluff_by_claim_size[cs]
+            if (dist.alpha + dist.beta) > 2.0:
+                estimates.append(dist.mean())
+                weights.append(1.0)
 
+        global_p = self.overall_bluff.mean()
         if not estimates:
-            return 0.3
+            return global_p
 
-        return sum(e * w for e, w in zip(estimates, weights)) / sum(weights)
+        local_p = sum(e * w for e, w in zip(estimates, weights)) / sum(weights)
+        total_w = sum(weights)
+        shrinkage = min(0.70, total_w / 5.0)
+        return (1.0 - shrinkage) * global_p + shrinkage * local_p
 
     def estimate_call_frequency(self) -> float:
         return self.call_frequency.mean()
+
+    def sample_bluff_probability(self, hand_size: int, claimed_rank: Rank,
+                                  claim_size: int) -> float:
+        """Sample bluff probability via Thompson Sampling from posterior Beta distributions."""
+        samples = []
+        weights = []
+
+        hs = min(hand_size, 26)
+        if hs in self.bluff_by_hand_size:
+            dist = self.bluff_by_hand_size[hs]
+            if (dist.alpha + dist.beta) > 2.0:
+                samples.append(dist.sample())
+                weights.append(2.0)
+
+        if claimed_rank in self.bluff_by_rank:
+            dist = self.bluff_by_rank[claimed_rank]
+            if (dist.alpha + dist.beta) > 2.0:
+                samples.append(dist.sample())
+                weights.append(1.5)
+
+        cs = min(claim_size, 4)
+        if cs in self.bluff_by_claim_size:
+            dist = self.bluff_by_claim_size[cs]
+            if (dist.alpha + dist.beta) > 2.0:
+                samples.append(dist.sample())
+                weights.append(1.0)
+
+        global_p = self.overall_bluff.sample()
+        if not samples:
+            return global_p
+
+        local_p = sum(s * w for s, w in zip(samples, weights)) / sum(weights)
+        total_w = sum(weights)
+        shrinkage = min(0.70, total_w / 5.0)
+        return (1.0 - shrinkage) * global_p + shrinkage * local_p
+
+    def sample_call_frequency(self) -> float:
+        """Sample call frequency via Thompson Sampling."""
+        return self.call_frequency.sample()
 
     def to_dict(self) -> dict:
         return {
             "total_actions_observed": self.total_actions_observed,
             "call_frequency": self.call_frequency.to_dict(),
+            "overall_bluff": self.overall_bluff.to_dict(),
             "bluff_by_hand_size": {str(k): v.to_dict()
                                    for k, v in self.bluff_by_hand_size.items()},
             "bluff_by_rank": {str(k.value): v.to_dict()
@@ -132,6 +189,8 @@ class OpponentModel:
         model = cls()
         model.total_actions_observed = d.get("total_actions_observed", 0)
         model.call_frequency = BetaDistribution.from_dict(d["call_frequency"])
+        if "overall_bluff" in d:
+            model.overall_bluff = BetaDistribution.from_dict(d["overall_bluff"])
         for k, v in d.get("bluff_by_hand_size", {}).items():
             model.bluff_by_hand_size[int(k)] = BetaDistribution.from_dict(v)
         for k, v in d.get("bluff_by_rank", {}).items():

@@ -34,6 +34,7 @@ from bots.honest_bot import HonestBot
 from bots.cardcount_bot import CardCountBot
 from bots.bayesian_bot import BayesianBot
 from bots.pure_nn_bot import PureNNBot
+from bots.hybrid_bot import HybridBot
 from db import pg as db
 
 # Opponent-model persistence helpers (imported here to avoid polluting the
@@ -70,6 +71,7 @@ BOT_CLASSES = {
     "cardcount": CardCountBot,
     "bayesian": BayesianBot,
     "purenn": PureNNBot,
+    "hybrid": HybridBot,
 }
 
 
@@ -122,9 +124,9 @@ class GameRoom:
                 self.bot_name, player_id=self.session_user_id)
         except Exception:  # noqa: BLE001 — db layer already swallows; belt first
             self.db_session_id = None
-        # Load persisted opponent model (best-effort, BayesianBot only)
+        # Load persisted opponent model (best-effort, BayesianBot and HybridBot)
         if (self.session_user_id and _OpponentModel is not None
-                and isinstance(self.bot, BayesianBot)):
+                and isinstance(self.bot, (BayesianBot, HybridBot))):
             try:
                 saved = await db.load_opponent_model(
                     self.session_user_id, self.bot_name)
@@ -219,6 +221,18 @@ class GameRoom:
             "can_pass": self.game.can_pass(),
             "message": message,
         }
+
+        # Real-time adaptation metrics from OpponentModel (BayesianBot & HybridBot)
+        bot_adaptation = None
+        if hasattr(self.bot, "model") and hasattr(self.bot.model, "overall_bluff"):
+            bot_adaptation = {
+                "estimated_bluff_rate": round(self.bot.model.overall_bluff.mean(), 3),
+                "estimated_call_frequency": round(self.bot.model.call_frequency.mean(), 3),
+                "actions_observed": self.bot.model.total_actions_observed,
+                "model_loaded": getattr(self, "model_loaded", False),
+            }
+        payload["bot_adaptation"] = bot_adaptation
+
         await self.ws.send_json(payload)
 
     async def send_game_over(self):
@@ -232,9 +246,9 @@ class GameRoom:
             human_won = winner == self.human_id
             message = "You win!" if human_won else "Bot wins!"
             result = "win" if human_won else "loss"
-        # Persist opponent model before closing (best-effort, BayesianBot only)
+        # Persist opponent model before closing (best-effort, BayesianBot and HybridBot)
         if (self.session_user_id
-                and isinstance(self.bot, BayesianBot)):
+                and isinstance(self.bot, (BayesianBot, HybridBot))):
             try:
                 model_data = {
                     "model": self.bot.model.to_dict(),
@@ -300,7 +314,7 @@ class GameRoom:
         # Update card counter with bot's own play (learn card distribution).
         # NOTE: we do NOT call observe_action here because that would feed
         # the bot's own play into the *opponent* model, corrupting it.
-        if isinstance(self.bot, BayesianBot):
+        if isinstance(self.bot, (BayesianBot, HybridBot)):
             self.bot.counter.update_with_play(cards)
 
         await db.log_action(
@@ -560,10 +574,23 @@ def list_bots():
     return {"bots": list(BOT_CLASSES.keys())}
 
 
+def _normalize_user_id(raw_id: Optional[str]) -> Optional[str]:
+    """Convert any user identifier (UUID, Clerk sub, device ID) to a valid UUID string."""
+    if not raw_id:
+        return None
+    try:
+        return str(uuid.UUID(raw_id))
+    except ValueError:
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, raw_id))
+
+
 @app.post("/rooms")
-def create_room(bot_name: str = "bayesian"):
+def create_room(bot_name: str = "bayesian", user_id: Optional[str] = None):
     room_id = str(uuid.uuid4())[:8]
-    rooms[room_id] = GameRoom(room_id, bot_name)
+    room = GameRoom(room_id, bot_name)
+    if user_id:
+        room.session_user_id = _normalize_user_id(user_id)
+    rooms[room_id] = room
     return {"room_id": room_id, "bot": bot_name}
 
 
@@ -585,7 +612,7 @@ def get_room(room_id: str):
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/{room_id}")
-async def websocket_endpoint(ws: WebSocket, room_id: str):
+async def websocket_endpoint(ws: WebSocket, room_id: str, user_id: Optional[str] = None):
     room = rooms.get(room_id)
     if room is None:
         await ws.accept()
@@ -595,9 +622,13 @@ async def websocket_endpoint(ws: WebSocket, room_id: str):
 
     await room.connect(ws)
 
-    # Stable per-connection identity for opponent-model persistence.
-    # Replaced by Clerk JWT sub when auth lands (docs/clerk-plan.md).
-    room.session_user_id = str(uuid.uuid4())
+    # Stable per-user identity for opponent-model persistence.
+    # Prioritizes query param user_id (Clerk / client UUID), then pre-set room.session_user_id, then random UUID.
+    norm_user = _normalize_user_id(user_id)
+    if norm_user:
+        room.session_user_id = norm_user
+    elif not room.session_user_id:
+        room.session_user_id = str(uuid.uuid4())
 
     try:
         # Start game and send initial state

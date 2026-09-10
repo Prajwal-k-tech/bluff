@@ -26,6 +26,12 @@ try:
 except (ImportError, OSError):
     _PURENN_AVAILABLE = False
 
+try:
+    from bots.hybrid_bot import HybridBot
+    _HYBRID_AVAILABLE = True
+except (ImportError, OSError):
+    _HYBRID_AVAILABLE = False
+
 
 def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
                     max_turns: int = 300,
@@ -74,8 +80,10 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
             turn += 1
             continue
 
-        if logger is not None:
-            logger.log_action(game.actions[-1], game)
+        # Pile size at play time (a call resolves/empties the pile before we
+        # log — report.py needs the at-play value for pile-size conditioning,
+        # cf. Dewey et al.: bluff rates are calibrated to stakes).
+        pile_at_play = game.get_pile_size()
 
         # Other bot decides: call bluff or pass
         last_action = game.actions[-1]
@@ -94,28 +102,50 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
             ),
         )
 
+        passed = False
         if should_call:
             success, result_msg, action = game.call_bluff(other)
             if success and action:
                 # Both bots observe the revealed cards
                 bots[current].observe_action(action, game.get_hand(other).size())
                 bots[other].observe_action(action, game.get_hand(current).size())
-                if logger is not None:
-                    logger.log_action(action, game)
         else:
             # Pass: draw 1 card and advance turn
             if game.can_pass():
                 success, pass_msg = game.pass_turn(passer=other)
-                if logger is not None:
-                    logger.log_pass(game, other)
+                passed = success
+                if success:
+                    # Notify current bot that opponent passed (chose not to call)
+                    # matching server.py:514-525 without leaking face-down cards
+                    pass_act = Action(
+                        player=other,
+                        cards_played=[],
+                        claimed_rank=Rank.TWO,
+                        was_bluff=False,
+                        bluff_called=False,
+                        caller_was_right=False,
+                        pile_size_before=game.get_pile_size(),
+                    )
+                    bots[current].observe_action(pass_act, game.get_hand(other).size())
             else:
                 # Cannot pass when draw pile empty — force call bluff
+                # (game-rules.md §2)
                 success, result_msg, action = game.call_bluff(other)
                 if success and action:
                     bots[current].observe_action(action, game.get_hand(other).size())
                     bots[other].observe_action(action, game.get_hand(current).size())
-                    if logger is not None:
-                        logger.log_action(action, game)
+
+        if logger is not None:
+            # Format-v2 semantics: exactly ONE log_action per play, logged
+            # AFTER resolution so action.bluff_called/caller_was_right are
+            # final. The logger emits the play record itself and, when a call
+            # happened, the second call record owned by the caller. Logging
+            # before resolution left bluff_called always False (v1 bug —
+            # Muse methodology catch, 2026-09-10).
+            logger.log_action(last_action, game, caller=other,
+                              pile_size_at_play=pile_at_play)
+            if passed:
+                logger.log_pass(game, other)
 
         turn += 1
 
@@ -152,6 +182,12 @@ def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
     else:
         print("  [SKIP] PureNNBot not available (torch or checkpoint missing)")
 
+    if _HYBRID_AVAILABLE:
+        bots["Hybrid"] = (partial(HybridBot, checkpoint_path=checkpoint)
+                           if checkpoint else HybridBot)
+    else:
+        print("  [SKIP] HybridBot not available")
+
     tee = None
     if log_path:
         tee = TeeLogger(log_path)
@@ -175,17 +211,30 @@ def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
             b_wins = 0
             draw_count = 0
 
-            for _ in range(num_games):
-                bot_a = bots[name_a]()
-                bot_b = bots[name_b]()
-                logger = tee.new_game(name_a, name_b) if tee else None
-                result = play_bot_vs_bot(bot_a, bot_b, logger=logger)
+            for g in range(num_games):
+                # 50/50 seat alternation to eliminate positional bias
+                if g % 2 == 0:
+                    bot_0, bot_1 = bots[name_a](), bots[name_b]()
+                    p0_name, p1_name = name_a, name_b
+                else:
+                    bot_0, bot_1 = bots[name_b](), bots[name_a]()
+                    p0_name, p1_name = name_b, name_a
+
+                logger = tee.new_game(p0_name, p1_name) if tee else None
+                result = play_bot_vs_bot(bot_0, bot_1, logger=logger)
 
                 if result == 0:
+                    winner_name, loser_name = p0_name, p1_name
+                elif result == 1:
+                    winner_name, loser_name = p1_name, p0_name
+                else:
+                    winner_name, loser_name = None, None
+
+                if winner_name == name_a:
                     a_wins += 1
                     wins[name_a] += 1
                     losses[name_b] += 1
-                elif result == 1:
+                elif winner_name == name_b:
                     b_wins += 1
                     wins[name_b] += 1
                     losses[name_a] += 1
