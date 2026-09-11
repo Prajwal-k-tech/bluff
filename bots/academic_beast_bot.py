@@ -71,6 +71,8 @@ class AcademicBeastBot(BotInterface):
             cand_paths = [
                 checkpoint_path,
                 "nn/checkpoints/bluffnet_xl_league.pt",
+                "nn/checkpoints/bluffnet_xl_ultimate_v2.pt",
+                "nn/checkpoints/bluffnet_xl_ppo.pt",
                 "nn/checkpoints/final.pt",
                 "nn/checkpoints/synthetic_league.pt",
                 "nn/checkpoints/v7_best.pt",

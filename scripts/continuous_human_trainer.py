@@ -79,8 +79,8 @@ def ingest_recent_telemetry(db_url: Optional[str] = None, min_samples: int = 500
             async def _fetch():
                 conn = await asyncpg.connect(db_url or os.environ.get("DATABASE_URL"))
                 rows = await conn.fetch(
-                    "SELECT action_type, cards_played, claimed_rank, hand_size_before, "
-                    "pile_size_before, was_bluff, caller_was_right FROM game_actions "
+                    "SELECT action_type, cards_played, claimed_rank, hand_size, "
+                    "pile_size, was_bluff, caller_was_right FROM actions "
                     "WHERE player_type = 'human' ORDER BY id DESC LIMIT 2000"
                 )
                 await conn.close()
