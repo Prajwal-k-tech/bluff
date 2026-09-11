@@ -154,7 +154,7 @@ def generate_synthetic_telemetry(n_samples: int = 2000) -> Tuple[torch.Tensor, t
         h_size = max(1, min(20, int(torch.normal(12.0, 4.0, (1,)).item())))
         hand = deck.deal(h_size)
         opp_size = max(1, min(20, int(torch.normal(12.0, 4.0, (1,)).item())))
-        pile_s = max(0, min(15, int(torch.exponential(torch.tensor(3.0)).item())))
+        pile_s = max(0, min(15, int(torch.empty(1).exponential_(1.0 / 3.0).item())))
         turn = min(50, i % 30 + 1)
 
         is_respond = (i % 3 == 0)

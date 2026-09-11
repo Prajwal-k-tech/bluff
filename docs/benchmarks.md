@@ -234,6 +234,21 @@ Reading: Policy exhibits clear opponent conditioning across both heads. Bluff ra
 
 Verdict (claim #2): conditioning does NOT lift win rate over vanilla PPO here (both 0% vs competent bots) — but it changes BEHAVIOR: conditioned v7 bluffs 25%/19% vs Honest/CardCount vs 7%/7% unconditioned, tracking opponent honesty while E2 stays uniformly cautious. Outcomes are draw-lock-dominated either way (Tess feasibility analysis). Claim #2 stands as opponent-calibrated BEHAVIOR, not win-rate delta. (Muse solo E2 run, PID 42943.)
 
+### E3 entropy 0.02 (`nn/checkpoints/e3_ent002.pt`, 60k, seed 1, warm-start v5)
+
+> First leg of the E3 sweep (matrix: 0.01 / 0.02 / 0.05 annealed to 0.01). Mirrors v7 exactly except `--ent-coef 0.02`. Eval: `python3 -m nn.benchmark --checkpoint nn/checkpoints/e3_ent002.pt --games 100 --seed 42 --markdown`. Solo run (systemd `bluff-e3-ent002`).
+
+| Matchup | W/L/D | Win rate [95% CI] | Bluff rate | Mean opp hand @ end |
+|---|---|---|---|---|
+| PureNN vs Random | 100-0-0 | 100% [96%, 100%] | 28% | 35.0 |
+| PureNN vs Honest | 0-17-83 | 0% [0%, 4%] | 28% | 3.0 |
+| PureNN vs CardCount | 0-13-87 | 0% [0%, 4%] | 22% | 3.2 |
+| PureNN vs Bayesian | 0-21-79 | 0% [0%, 4%] | 5% | 21.9 |
+
+(Best-checkpoint twin `e3_ent002_best.pt` (early save): R100 / H0-6-94 / C0-12-88 / B0-16-84 — same picture.)
+
+Verdict: FLAT response — ent 0.02-start is indistinguishable from v7's 0.05-start on outcomes (0% everywhere, draw-locked) and near-identical on calibration. The 0.05 leg is REDUNDANT (v7 already ran it) — skipping straight to flat 0.01, the only remaining informative point (deterministic-collapse test).
+
 ---
 
 ## 3. Full round-robin incl. trained NN & HybridBot (E4)

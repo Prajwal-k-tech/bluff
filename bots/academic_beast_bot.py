@@ -29,6 +29,7 @@ from cards import Card, Rank
 from game import Action
 from bots.base import BotInterface, pending_claims_from_actions, pool_by_rank
 from bots.bayesian_bot import BluffTracker, CardCounter, OpponentModel
+from bots.archetype_classifier import ArchetypeClassifier
 from nn.model import BluffNet, ACTION_DIM, CALL_ACTION, PASS_ACTION, build_legal_actions, decode_action_into
 from nn.state_encoder import StateEncoder, STATE_DIM
 
@@ -48,6 +49,11 @@ class AcademicBeastBot(BotInterface):
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
         self.player_id: Optional[int] = None
+        self.classifier = ArchetypeClassifier()
+        self.opp_bluffs: int = 0
+        self.opp_honest: int = 0
+        self.opp_calls: int = 0
+        self.opp_passes: int = 0
 
         # Load BluffNet if available for state evaluation
         self.net: Optional[BluffNet] = None
@@ -75,6 +81,20 @@ class AcademicBeastBot(BotInterface):
         self.model.observe_action(action, opponent_hand_size)
         if action.cards_played:
             self.counter.update_with_play(action.cards_played)
+
+        # Track archetype observations
+        if self.player_id is not None:
+            if action.player != self.player_id:
+                if action.cards_played and action.bluff_called:
+                    if action.caller_was_right:
+                        self.opp_bluffs += 1
+                    else:
+                        self.opp_honest += 1
+                elif not action.cards_played:
+                    self.opp_passes += 1
+            else:
+                if action.bluff_called:
+                    self.opp_calls += 1
 
     def _remaining_pool(self, hand: List[Card], game_state: dict) -> Dict[Rank, int]:
         pending = game_state.get("pending_claims")
@@ -104,6 +124,24 @@ class AcademicBeastBot(BotInterface):
             rank_counts[c.rank] = rank_counts.get(c.rank, 0) + 1
 
         # 2. Game-Theoretic Offensive Multi-Card Shedding:
+        top_arch, arch_conf = self.classifier.top_archetype(
+            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
+        )
+
+        # Tactical Archetype Counter:
+        # Calling Station catches everything -> NEVER bluff, play 100% honest cards
+        if top_arch == "Calling_Station" and arch_conf >= 0.50:
+            multi_honest = [r for r, count in rank_counts.items() if count >= 2]
+            if multi_honest:
+                best_r = max(multi_honest, key=lambda r: (rank_counts[r], r.value))
+                cards_to_dump = [c for c in hand if c.rank == best_r][:min(4, rank_counts[best_r])]
+                return (cards_to_dump, best_r)
+            available_ranks = sorted(rank_counts.keys(), key=lambda r: r.value, reverse=True)
+            for r in available_ranks:
+                honest_cards = [c for c in hand if c.rank == r][:1]
+                return (honest_cards, r)
+            return ([hand[0]], hand[0].rank)
+
         # If opponent is passive (call_freq < 0.40) or honest (opp_bluff_rate < 0.15),
         # shedding 2-4 cards per turn is mathematically the dominant strategy to win before draw exhaustion.
         pool = self._remaining_pool(hand, game_state)
@@ -195,7 +233,16 @@ class AcademicBeastBot(BotInterface):
         # If opponent is a chronic bluffer (overall_bluff_p > 0.40), discount threshold further
         deception_discount = (overall_bluff_p - 0.20) * 0.50
 
-        dynamic_threshold = max(0.35, min(0.85, base_threshold + stake_adjustment - deception_discount))
+        # Archetype adjustments
+        top_arch, arch_conf = self.classifier.top_archetype(
+            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
+        )
+        if top_arch == "Honest_Rock" and arch_conf >= 0.50 and counting_p < 0.999:
+            return False
+        if top_arch == "Hyper_Maniac" and arch_conf >= 0.50 and pile_size <= 4:
+            deception_discount += 0.15
+
+        dynamic_threshold = max(0.30, min(0.85, base_threshold + stake_adjustment - deception_discount))
 
         # Dynamic Bayesian + Combinatorial Fusion (NO neural dilution)
         n_obs = self.model.total_actions_observed
