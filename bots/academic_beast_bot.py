@@ -300,13 +300,14 @@ class AcademicBeastBot(BotInterface):
         if counting_p >= 0.999:
             return True
 
-        # 2. Bayesian Opponent Modeling with Thompson Sampling
-        if self.thompson_sampling:
+        # 2. Bayesian Opponent Modeling with Archetype-Conditioned Thompson Sampling (ADR-012)
+        mean_bluff_p = self.model.overall_bluff.mean()
+        if self.thompson_sampling and mean_bluff_p >= 0.15:
             model_p = self.model.sample_bluff_probability(opp_hand_size, claimed_rank, claim_size)
             overall_bluff_p = self.model.overall_bluff.sample()
         else:
             model_p = self.model.estimate_bluff_probability(opp_hand_size, claimed_rank, claim_size)
-            overall_bluff_p = self.model.overall_bluff.mean()
+            overall_bluff_p = mean_bluff_p
 
         # 3. Game-Theoretic Honest Grounding (Yeung 2008 / Southey 2005)
         if overall_bluff_p < 0.15 and counting_p < 0.95:

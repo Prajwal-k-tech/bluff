@@ -249,6 +249,19 @@ Verdict (claim #2): conditioning does NOT lift win rate over vanilla PPO here (b
 
 Verdict: FLAT response — ent 0.02-start is indistinguishable from v7's 0.05-start on outcomes (0% everywhere, draw-locked) and near-identical on calibration. The 0.05 leg is REDUNDANT (v7 already ran it) — skipping straight to flat 0.01, the only remaining informative point (deterministic-collapse test).
 
+### E3 entropy 0.01 flat (`nn/checkpoints/e3_ent001.pt`, 60k, seed 1, warm-start v5)
+
+> Final sweep leg (systemd `bluff-e3-ent001`, clean finish). Eval: `python3 -m nn.benchmark --checkpoint nn/checkpoints/e3_ent001.pt --games 100 --seed 42 --markdown`
+
+| Matchup | W/L/D | Win rate [95% CI] | Bluff rate | Mean opp hand @ end |
+|---|---|---|---|---|
+| PureNN vs Random | 100-0-0 | 100% [96%, 100%] | 45% | 33.5 |
+| PureNN vs Honest | 0-21-79 | 0% [0%, 4%] | 28% | 2.8 |
+| PureNN vs CardCount | 0-10-90 | 0% [0%, 4%] | 18% | 3.1 |
+| PureNN vs Bayesian | 0-14-86 | 0% [0%, 4%] | 3% | 19.4 |
+
+Sweep verdict (ent ∈ {0.01, 0.02, 0.05}): NO material difference anywhere — outcomes 0% vs competent bots in all three configs, calibration curves near-identical, no deterministic collapse even at flat 0.01 (bluff rates healthy across opponents). Entropy is NOT a lever in this setup; the architecture (conditioning + league + shaping + credit fix) dominates. Claim #3 reframed: entropy guards against collapse (v1's 0.0 lesson stands) but 0.01–0.05 is a flat plateau — tuning frontier moves to roster/curriculum/thresholds, not ent_coef. (Muse solo sweep, PIDs 93152/111923.)
+
 ---
 
 ## 3. Full round-robin incl. trained NN & HybridBot (E4)

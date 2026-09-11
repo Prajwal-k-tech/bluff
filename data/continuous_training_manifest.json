@@ -1,0 +1,22 @@
+[
+  {
+    "timestamp": "2026-09-11 11:45:19",
+    "samples_ingested": 64,
+    "total_buffer_size": 158,
+    "pre_loss": 22.070829391479492,
+    "pre_acc": 0.2608695652173913,
+    "final_val_loss": 21.144079208374023,
+    "final_val_acc": 0.21739130434782608,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 11:48:27",
+    "samples_ingested": 64,
+    "total_buffer_size": 237,
+    "pre_loss": 32.768062591552734,
+    "pre_acc": 0.17142857142857143,
+    "final_val_loss": 31.41207711356027,
+    "final_val_acc": 0.17142857142857143,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  }
+]
