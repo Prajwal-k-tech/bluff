@@ -188,7 +188,7 @@ class HybridBot(BotInterface):
         if ob is None:
             return False
         observed = (ob.alpha + ob.beta) - (3 + 7)  # minus the Beta(3,7) prior
-        if observed < 5:
+        if observed < 3:  # ADR-012 tune: 5→3 (Total_Maniac activation timing — matrix v4 validates)
             return False
         return ob.mean() >= 0.35
 
