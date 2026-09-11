@@ -67,7 +67,9 @@ def play_game(human_player: HumanPlayer, bot: BotInterface,
         print(f"  Bot has {game.get_hand(bot_id).size()} cards.")
 
     turn = 0
-    max_turns = 200
+    # LOCKED game-rules.md §1: 100-turn cap (engine enforces via game_over;
+    # this harness cap is a dead safety net, kept equal on purpose).
+    max_turns = 100
 
     while not game.game_over and turn < max_turns:
         current = game.current_player
