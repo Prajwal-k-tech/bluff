@@ -231,7 +231,7 @@ class GameRoom:
                 "estimated_bluff_rate": round(self.bot.model.overall_bluff.mean(), 3),
                 "estimated_call_frequency": round(self.bot.model.call_frequency.mean(), 3),
                 "actions_observed": self.bot.model.total_actions_observed,
-                "model_loaded": getattr(self, "model_loaded", False),
+                "model_loaded": getattr(self, "_model_loaded", False),  # HOTFIX Tess 2026-09-11: was reading non-existent attr (always False)
             }
             if hasattr(self.bot, "classifier") and hasattr(self.bot, "opp_bluffs"):
                 top_arch, conf = self.bot.classifier.top_archetype(

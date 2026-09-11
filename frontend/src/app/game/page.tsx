@@ -1156,7 +1156,7 @@ export default function GamePage() {
   const [botCards, setBotCards] = useState(14);
   const [round, setRound] = useState(1);
   const [pileCount, setPileCount] = useState(0);
-  const [deckCount, setDeckCount] = useState(28);
+  const [deckCount, setDeckCount] = useState(24); // HOTFIX Tess 2026-09-11: was 28, actual is 24 (52-14*2); WS corrects it anyway
   const [claimedRank, setClaimedRank] = useState<Rank>("7");
   const [claimedBy, setClaimedBy] = useState<"You" | "Bot">("You");
   const [playedCount, setPlayedCount] = useState(1);
