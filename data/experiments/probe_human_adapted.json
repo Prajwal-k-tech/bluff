@@ -1,0 +1,87 @@
+{
+  "stats_a": {
+    "name": "final.pt",
+    "n_total": 500,
+    "n_respond": 250,
+    "n_play": 250,
+    "mean_entropy": 0.7938311356098057,
+    "mean_value": -0.7877147358655929,
+    "respond_mean_call_prob": 0.7811236336733564,
+    "respond_mean_pass_prob": 0.21887636802345514,
+    "respond_argmax_call_rate": 0.772,
+    "respond_argmax_pass_rate": 0.228,
+    "respond_mean_entropy": 0.13461079714012159,
+    "play_mean_call_prob": 0.0,
+    "play_mean_pass_prob": 0.0,
+    "play_argmax_call_rate": 0.0,
+    "play_mean_entropy": 1.4530514740794898,
+    "respond_call_over_pass": 0.772,
+    "entropy_ratio": 0.5213515911025284,
+    "respond_by_hand_size": {
+      "medium": {
+        "calls": 69,
+        "total": 90,
+        "call_prob_sum": 70.83108369643014,
+        "call_rate": 0.7666666666666667,
+        "mean_call_prob": 0.7870120410714461
+      },
+      "large": {
+        "calls": 72,
+        "total": 97,
+        "call_prob_sum": 73.73472409603346,
+        "call_rate": 0.7422680412371134,
+        "mean_call_prob": 0.7601517948044687
+      },
+      "small": {
+        "calls": 52,
+        "total": 63,
+        "call_prob_sum": 50.71510062587549,
+        "call_rate": 0.8253968253968254,
+        "mean_call_prob": 0.805001597236119
+      }
+    }
+  },
+  "stats_b": {
+    "name": "human_adapted.pt",
+    "n_total": 500,
+    "n_respond": 250,
+    "n_play": 250,
+    "mean_entropy": 1.522640669286251,
+    "mean_value": -0.5357414374053479,
+    "respond_mean_call_prob": 0.8483140688836575,
+    "respond_mean_pass_prob": 0.1516859329342842,
+    "respond_argmax_call_rate": 0.844,
+    "respond_argmax_pass_rate": 0.156,
+    "respond_mean_entropy": 0.20094034159183502,
+    "play_mean_call_prob": 0.0,
+    "play_mean_pass_prob": 0.0,
+    "play_argmax_call_rate": 0.0,
+    "play_mean_entropy": 2.8443409969806672,
+    "respond_call_over_pass": 0.844,
+    "entropy_ratio": 1.918091393727695,
+    "respond_by_hand_size": {
+      "medium": {
+        "calls": 74,
+        "total": 90,
+        "call_prob_sum": 76.59508579969406,
+        "call_rate": 0.8222222222222222,
+        "mean_call_prob": 0.8510565088854896
+      },
+      "large": {
+        "calls": 83,
+        "total": 97,
+        "call_prob_sum": 82.56428469717503,
+        "call_rate": 0.8556701030927835,
+        "mean_call_prob": 0.8511781927543817
+      },
+      "small": {
+        "calls": 54,
+        "total": 63,
+        "call_prob_sum": 52.91914672404528,
+        "call_rate": 0.8571428571428571,
+        "mean_call_prob": 0.8399864559372267
+      }
+    }
+  },
+  "mean_logit_diff": 4.8729492809394035
+}

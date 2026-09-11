@@ -718,6 +718,8 @@ Incorporating the **Terminal Defense Invariant** (ADR-016) into `AcademicBeastBo
 ## Section 16: 3-Seed Sensitivity Verification Study (6,000 Games) & The Bluff Expected Value Theorem (ADR-017)
 
 ### 16.1 Parallel 3-Seed Sensitivity Verification Study (`experiments/verify_bayesian_weightage_3seed.py`)
+
+> **Protocol note (Tess, Gate-1 reconciled 2026-09-11):** this study reuses one bot per (regime, seed, persona) cell while `AcademicBeastBot.reset()` intentionally persists model/counters/classifier — a **continual-learning protocol**, not fresh-bot eval. Its 72–78% numbers measure adaptation and are consistent with (not contradicting) the fresh-bot flat-null. Heavy_Bayesian here = exponential/tau-3 variant; the canonical sigmoidal/tau-8 variant lives in the arbitration study — do not compare across studies.
 To resolve the statistical power and Wilson 95% confidence interval criteria across multi-seed evaluations, we executed a 6,000-game factorial sweep across 3 independent master seeds (`20260911`, `20260912`, `20260913`) and 4 regimes evaluated against all 20 synthetic personas ($N=25$/persona/regime/seed $\times$ 3 seeds = 6,000 games total, 12 parallel CPU workers, strict 50/50 seat alternation):
 
 | Regime Name | Architecture Description | Total Games | Wins | Losses | Draws | Win Rate | Wilson 95% CI | Loss Rate | Net Score |
