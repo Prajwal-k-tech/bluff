@@ -167,21 +167,27 @@ class HybridBot(BotInterface):
         return w_nn, w_bayes
 
     def _use_thompson(self) -> bool:
-        """ADR-012 decision #2 (wiring by Tess): archetype-conditioned sampling.
+        """ADR-012 decision #2 (wiring by Tess; iteration 2): archetype-
+        conditioned sampling fed by the OpponentModel's FULL posterior.
 
-        Posterior sampling only against an inferred Hyper Maniac cluster — the
-        12k persona study showed sampling is +15-37% relative wins vs maniacs
-        but counterproductive vs honest rocks. Below 5 observations:
-        deterministic (the safe default against unknown opponents).
+        Iteration-1 falsification: revealed-only evidence counters are blind
+        to uncalled bluffs (info model), so conditioning never activated vs
+        maniacs — conditioned ≡ never_thompson on both maniac personas.
+        Fix: the classifier consumes the model's Beta posterior pseudo-counts
+        (alpha=bluff evidence, beta=honest evidence), which update on EVERY
+        opponent play. Still gated on Hyper_Maniac top-archetype with a
+        5-observation floor (deterministic against unknown/low-evidence).
         """
         if not self.thompson_sampling:
             return False
-        total_obs = (self._obs_bluffs + self._obs_honest
-                     + self._obs_calls + self._obs_passes)
-        if total_obs < 5:
+        ob = getattr(self.model, "overall_bluff", None)
+        if ob is None:
+            return False
+        observed = (ob.alpha + ob.beta) - (3 + 7)  # minus the Beta(3,7) prior
+        if observed < 5:
             return False
         name, _conf = self.classifier.top_archetype(
-            self._obs_bluffs, self._obs_honest, self._obs_calls, self._obs_passes
+            ob.alpha, ob.beta, self._obs_calls, self._obs_passes
         )
         # NOTE: archetype names are underscore-style ("Hyper_Maniac") — matched
         # against the classifier's actual constants, not docstring phrasing.
