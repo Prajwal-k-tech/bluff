@@ -1,72 +1,154 @@
 {
-  "baseline": {
-    "name": "Baseline_Conservative",
-    "wins": 195,
-    "losses": 3,
-    "draws": 2,
-    "total_calls": 469,
-    "correct_calls": 31,
-    "s_lock_sum": 3426.0,
-    "games_count": 200,
-    "per_opp": {
-      "HonestBot": [
-        95,
-        3,
-        2
+  "main": {
+    "baseline_promoted": {
+      "name": "baseline_promoted",
+      "wins": 1363,
+      "losses": 23,
+      "draws": 214,
+      "total_calls": 17291,
+      "correct_calls": 3366,
+      "s_lock_sum": 22855,
+      "games": 1600,
+      "per_opp": {
+        "Honest": {
+          "w": 394,
+          "l": 5,
+          "d": 1,
+          "a_call": 0.0,
+          "s_lock": 21.9275
+        },
+        "CardCount": {
+          "w": 169,
+          "l": 18,
+          "d": 213,
+          "a_call": 0.018912529550827423,
+          "s_lock": 21.1625
+        },
+        "Bayesian": {
+          "w": 400,
+          "l": 0,
+          "d": 0,
+          "a_call": 7.467838092249765,
+          "s_lock": 13.6625
+        },
+        "Random": {
+          "w": 400,
+          "l": 0,
+          "d": 0,
+          "a_call": 98.86148007590133,
+          "s_lock": 0.385
+        }
+      },
+      "win_rate": 85.1875,
+      "loss_rate": 1.4375,
+      "draw_rate": 13.375,
+      "w_ci": [
+        0.833626643244824,
+        0.8684377002664054
       ],
-      "BayesianBot": [
-        100,
-        0,
-        0
-      ]
+      "call_accuracy": 19.466774622636052,
+      "mean_s_lock": 14.284375
     },
-    "win_rate": 97.5,
-    "loss_rate": 1.5,
-    "draw_rate": 1.0,
-    "w_ci": [
-      0.9428208558483829,
-      0.9892754385292123
-    ],
-    "l_ci": [
-      0.005114145184492384,
-      0.04316648055627889
-    ],
-    "call_accuracy": 6.609808102345416,
-    "mean_s_lock": 17.13
+    "conservative_baseline": {
+      "name": "conservative_baseline",
+      "wins": 1348,
+      "losses": 25,
+      "draws": 227,
+      "total_calls": 17608,
+      "correct_calls": 3228,
+      "s_lock_sum": 23049,
+      "games": 1600,
+      "per_opp": {
+        "Honest": {
+          "w": 392,
+          "l": 6,
+          "d": 2,
+          "a_call": 0.0,
+          "s_lock": 22.4725
+        },
+        "CardCount": {
+          "w": 156,
+          "l": 19,
+          "d": 225,
+          "a_call": 0.009128251939753538,
+          "s_lock": 19.8875
+        },
+        "Bayesian": {
+          "w": 400,
+          "l": 0,
+          "d": 0,
+          "a_call": 7.5752871778950635,
+          "s_lock": 14.84
+        },
+        "Random": {
+          "w": 400,
+          "l": 0,
+          "d": 0,
+          "a_call": 99.1029900332226,
+          "s_lock": 0.4225
+        }
+      },
+      "win_rate": 84.25,
+      "loss_rate": 1.5625,
+      "draw_rate": 14.1875,
+      "w_ci": [
+        0.8238328464284093,
+        0.859526408001704
+      ],
+      "call_accuracy": 18.33257610177192,
+      "mean_s_lock": 14.405625
+    }
   },
-  "beast": {
-    "name": "Dewey_EV_Beast",
-    "wins": 199,
-    "losses": 1,
-    "draws": 0,
-    "total_calls": 477,
-    "correct_calls": 21,
-    "s_lock_sum": 3176.0,
-    "games_count": 200,
-    "per_opp": {
-      "HonestBot": [
-        99,
-        1,
-        0
-      ],
-      "BayesianBot": [
-        100,
-        0,
-        0
-      ]
+  "sensitivity": {
+    "1": {
+      "baseline_promoted": {
+        "wins": 343,
+        "losses": 4,
+        "draws": 53,
+        "win_rate": 85.75
+      },
+      "conservative_baseline": {
+        "wins": 338,
+        "losses": 3,
+        "draws": 59,
+        "win_rate": 84.5
+      }
     },
-    "win_rate": 99.5,
-    "loss_rate": 0.5,
-    "draw_rate": 0.0,
-    "w_ci": [
-      0.9722256001302286,
-      0.999116854010634
-    ],
-    "l_ci": [
-      0.0008831459893662054,
-      0.02777439986977148
-    ],
-    "call_accuracy": 4.40251572327044,
-    "mean_s_lock": 15.88
+    "2": {
+      "baseline_promoted": {
+        "wins": 341,
+        "losses": 6,
+        "draws": 53,
+        "win_rate": 85.25
+      },
+      "conservative_baseline": {
+        "wins": 344,
+        "losses": 5,
+        "draws": 51,
+        "win_rate": 86.0
+      }
+    },
+    "3": {
+      "baseline_promoted": {
+        "wins": 336,
+        "losses": 9,
+        "draws": 55,
+        "win_rate": 84.0
+      },
+      "conservative_baseline": {
+        "wins": 340,
+        "losses": 5,
+        "draws": 55,
+        "win_rate": 85.0
+      }
+    }
+  },
+  "verdict": {
+    "promoted_win_rate": 85.1875,
+    "baseline_win_rate": 84.25,
+    "promoted_wins": true,
+    "s_lock_not_worse": true,
+    "a_call_not_worse": true,
+    "seed_stable": false
   }
 }

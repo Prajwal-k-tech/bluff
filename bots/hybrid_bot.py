@@ -69,6 +69,8 @@ class HybridBot(BotInterface):
         exploit_mult: float = 2.5,
         call_mult: float = 1.8,
         variance_scaled: bool = True,
+        decay_tau: float = 8.0,
+        nn_floor: float = 0.15,
     ):
         path = checkpoint_path or os.environ.get("BLUFF_NN_CHECKPOINT", DEFAULT_CHECKPOINT)
         if not os.path.exists(path):
@@ -85,6 +87,8 @@ class HybridBot(BotInterface):
         self.exploit_mult = exploit_mult
         self.call_mult = call_mult
         self.variance_scaled = variance_scaled
+        self.decay_tau = decay_tau
+        self.nn_floor = nn_floor
         self.net: Optional[BluffNet] = None
         self.encoder = StateEncoder()
         self.player_id: Optional[int] = None
@@ -136,6 +140,20 @@ class HybridBot(BotInterface):
             **signals,
         }
 
+    def get_td_moe_weights(self, tau: Optional[float] = None, w_floor: Optional[float] = None) -> Tuple[float, float]:
+        """
+        Temporal Decaying Mixture of Experts (TD-MoE) schedule:
+        w_nn(n) = w_floor + (1.0 - w_floor) * exp(-n / tau)
+        w_bayes(n) = 1.0 - w_nn(n)
+        """
+        tau_val = tau if tau is not None else self.decay_tau
+        floor_val = w_floor if w_floor is not None else self.nn_floor
+        n_obs = self.model.total_actions_observed
+        w_nn = floor_val + (1.0 - floor_val) * math.exp(-n_obs / max(0.5, tau_val))
+        w_nn = max(floor_val, min(1.0, w_nn))
+        w_bayes = 1.0 - w_nn
+        return w_nn, w_bayes
+
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
             return ([], Rank.TWO)
@@ -147,7 +165,9 @@ class HybridBot(BotInterface):
             call_freq = self.model.estimate_call_frequency()
             opp_bluff_rate = getattr(self.model, "overall_bluff", None)
             overall_bluff_p = opp_bluff_rate.mean() if opp_bluff_rate else 0.20
-        confidence = min(self.w_model_cap, self.model.total_actions_observed / 25.0)
+
+        w_nn, w_bayes = self.get_td_moe_weights()
+        confidence = min(self.w_model_cap, w_bayes * self.w_model_cap)
 
         # Multi-card shedding when facing passive or honest opponents (call_freq < 0.35 or overall_bluff_p < 0.15).
         # In Cheat, shedding >= 2 cards per turn is the only way to reduce hand size
@@ -337,19 +357,20 @@ class HybridBot(BotInterface):
         deception_discount = (overall_p - 0.20) * (self.call_mult * 0.30)
         call_thresh = max(0.35, min(0.85, base_threshold + stake_adjustment - deception_discount))
 
-        # NN tactical modulation (bounded +-0.05, avoids probability dilution)
+        # NN tactical modulation (scaled by decaying w_nn)
+        w_nn, w_bayes = self.get_td_moe_weights()
         if self.net is not None:
-            nn_delta = (nn_p - 0.50) * 0.08
+            nn_delta = (nn_p - 0.50) * (0.12 * w_nn)
             call_thresh = max(0.35, min(0.85, call_thresh - nn_delta))
 
-        # Dynamic Bayesian + Combinatorial Fusion
+        # Dynamic Bayesian + Combinatorial Fusion (scaled by w_bayes and epistemic certainty)
         n_obs = self.model.total_actions_observed
         if self.variance_scaled:
             var = self.model.overall_bluff.variance()
             certainty = max(0.0, 1.0 - (var / 0.05))
-            w_model = min(self.w_model_cap, certainty * self.w_model_cap)
+            w_model = min(self.w_model_cap, w_bayes * certainty * self.w_model_cap)
         else:
-            w_model = min(self.w_model_cap, n_obs / 25.0)
+            w_model = min(self.w_model_cap, w_bayes * self.w_model_cap)
 
         w_count = 1.0 - w_model
         fused_bluff_prob = w_model * model_p + w_count * counting_p
@@ -372,6 +393,8 @@ class HybridBot(BotInterface):
             "exploit_mult": self.exploit_mult,
             "call_mult": self.call_mult,
             "variance_scaled": self.variance_scaled,
+            "decay_tau": self.decay_tau,
+            "nn_floor": self.nn_floor,
         }
 
     @classmethod
@@ -381,6 +404,8 @@ class HybridBot(BotInterface):
         exploit_m = d.get("exploit_mult", 2.5)
         call_m = d.get("call_mult", 1.8)
         var_sc = d.get("variance_scaled", True)
+        decay_tau = d.get("decay_tau", 8.0)
+        nn_floor = d.get("nn_floor", 0.15)
         bot = cls(
             checkpoint_path=checkpoint_path,
             thompson_sampling=thompson,
@@ -388,6 +413,8 @@ class HybridBot(BotInterface):
             exploit_mult=exploit_m,
             call_mult=call_m,
             variance_scaled=var_sc,
+            decay_tau=decay_tau,
+            nn_floor=nn_floor,
         )
         if "model" in d:
             bot.model = OpponentModel.from_dict(d["model"])
@@ -420,3 +447,5 @@ class HybridBot(BotInterface):
         self.exploit_mult = loaded.exploit_mult
         self.call_mult = loaded.call_mult
         self.variance_scaled = loaded.variance_scaled
+        self.decay_tau = loaded.decay_tau
+        self.nn_floor = loaded.nn_floor
