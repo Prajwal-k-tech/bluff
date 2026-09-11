@@ -107,24 +107,20 @@ class HybridBot(BotInterface):
 
         self.model = OpponentModel()
         self.counter = CardCounter()
-        # ADR-012 decision #2: archetype-conditioned Thompson sampling (Tess)
+        # Archetype telemetry (server bot_adaptation stream) — decision-path
+        # gate falsified and reverted; classifier kept for streaming only.
+        # (ADR-012 resolution, Tess)
         self.classifier = ArchetypeClassifier()
-        self._obs_bluffs = 0
-        self._obs_honest = 0
-        self._obs_calls = 0
-        self._obs_passes = 0
-        self.bluff_tracker = BluffTracker()
-        self.bluff_threshold = 0.55
-        self.call_threshold = 0.50
-
+        self.opp_bluffs: int = 0
+        self.opp_honest: int = 0
+        self.opp_calls: int = 0
+        self.opp_passes: int = 0
     def reset(self):
         self.counter = CardCounter()
-        # ADR-012: per-game archetype evidence reset (Tess)
-        self._obs_bluffs = 0
-        self._obs_honest = 0
-        self._obs_calls = 0
-        self._obs_passes = 0
-
+        self.opp_bluffs = 0
+        self.opp_honest = 0
+        self.opp_calls = 0
+        self.opp_passes = 0
     def _remaining_counts(self, hand: List[Card], game_state: dict) -> dict:
         pending = game_state.get("pending_claims")
         if pending is None:
@@ -167,30 +163,31 @@ class HybridBot(BotInterface):
         return w_nn, w_bayes
 
     def _use_thompson(self) -> bool:
-        """ADR-012 decision #2 (wiring by Tess; iteration 3): bluff-rate-gated
-        posterior sampling.
+        """ADR-012 decision #2 — RESOLVED (5-run experiment loop, Tess):
+        the gate is FALSIFIED; unconditional posterior sampling is the default.
 
-        Iteration history: (1) revealed-only classifier evidence was blind to
-        uncalled bluffs — conditioning never fired vs maniacs (falsified by
-        the resolution matrix, 0/4). (2) full-posterior pseudo-counts through
-        the classifier still mis-routed: its Hyper_Maniac anchor is calibrated
-        at ~0.80 mean bluff rate, so real maniacs (0.65-0.75) classified as
-        Balanced_GTO. (3) THIS VERSION — test the quantity that matters
-        directly: sample when the model's inferred opponent bluff rate is
-        high enough that exploratory calls have positive EV. The 12k study:
-        Thompson wins vs bluff-rate >~0.35-0.45 (+15-37% vs maniacs), loses
-        vs rocks. The classifier itself remains in use for the live
-        archetype-telemetry stream (server bot_adaptation broadcasts).
+        Iteration history (each falsified by resolution matrices; full data in
+        docs/claims-drawlock-calibration.md and AGENT_CHAT):
+        (1) revealed-only classifier gate — evidence-starved vs maniacs
+            (uncalled bluffs unobservable): conditioned == never on maniacs.
+        (2) model-posterior through the classifier — anchor miscalibration
+            (Hyper_Maniac anchor ~0.80 mean; real maniacs 0.65-0.75 classify
+            as Balanced_GTO).
+        (3) direct mean-gate (>=0.35) — the posterior mean never crosses the
+            threshold in-game vs maniacs (formation too slow from uncalled
+            claim statistics): activated in 35% of games, median turn 33.
+        (4) floor 5->3 — no material effect; the residual gap is
+            posterior-formation latency.
+        (5) two-attempt directed exploration — NEGATIVE: wrong-calls cost vs
+            honest (82% vs 88%) and balanced (6% vs 11%) without reaching
+            always-sampling's maniac level (49% vs 56%).
+        FINAL VERDICT: unconditional posterior sampling wins 3-4/4 personas
+        across five runs; the archetype classifier remains in service for the
+        live telemetry stream (server bot_adaptation) only. Same-seed matrix:
+        conditioned never significantly loses (CIs overlap everywhere), so
+        the gate is documented as the explored-and-rejected alternative.
         """
-        if not self.thompson_sampling:
-            return False
-        ob = getattr(self.model, "overall_bluff", None)
-        if ob is None:
-            return False
-        observed = (ob.alpha + ob.beta) - (3 + 7)  # minus the Beta(3,7) prior
-        if observed < 3:  # ADR-012 tune: 5→3 (Total_Maniac activation timing — matrix v4 validates)
-            return False
-        return ob.mean() >= 0.35
+        return self.thompson_sampling
 
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
@@ -419,21 +416,20 @@ class HybridBot(BotInterface):
         self.model.observe_action(action, opponent_hand_size)
         if action.cards_played:
             self.counter.update_with_play(action.cards_played)
-        # ADR-012: opponent-behavior evidence for archetype classification (Tess)
+        # Opponent-behavior evidence for the live archetype stream (Tess)
         pid = getattr(self, "player_id", None)
         if pid is not None:
             opp = 1 - pid
             if action.player == opp:
                 if action.cards_played and action.bluff_called:
                     if action.was_bluff:
-                        self._obs_bluffs += 1
+                        self.opp_bluffs += 1
                     else:
-                        self._obs_honest += 1
+                        self.opp_honest += 1
                 elif not action.cards_played:
-                    self._obs_passes += 1
+                    self.opp_passes += 1
             elif action.bluff_called:
-                self._obs_calls += 1
-
+                self.opp_calls += 1
     def to_dict(self) -> dict:
         return {
             "model": self.model.to_dict(),
