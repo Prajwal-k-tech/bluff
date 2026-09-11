@@ -681,6 +681,19 @@ To formally answer whether neural representation adds value over pure Bayesian-c
 
 ---
 
+### 720-game 5-architecture ablation, raw (A14 — complements §14's 4,000-game factorial)
+
+> Raw data: `data/ablation_nn_vs_bayesian.json` (`experiments/ablate_nn_vs_bayesian.py`, N=180/architecture vs 6 opponents: Honest/CardCount/Bayesian/Random/Calling_Station/Hyper_Maniac). The Academic Beast row in paper §5.5 draws on §12–13 tournament data.
+
+| Architecture | W / L / D | Win rate | Loss rate |
+|---|---|---|---|
+| NoNN_Hybrid (Bayes+Count) | 71 / 2 / 107 | 39.4% | 1.1% |
+| Pure_Bayesian | 62 / 24 / 94 | 34.4% | 13.3% |
+| Full_Hybrid (NN+Bayes+Count) | 46 / 2 / 132 | 25.6% | 1.1% |
+| Pure_NN | 34 / 9 / 137 | 18.9% | 5.0% |
+
+Reading: NoNN > Full_Hybrid here (same 2 losses) — neural dilution in the small-net regime; contrasts with §14's XL-scale factorial where the NN contributes. Both retained; the tension is real and documented (NN value is scale-dependent). The 24-loss Pure_Bayesian row is why blind Bayesian weightage without thresholds fails — cf. A12 promoted-regime guardrails.
+
 ## Section 15: Scaled 250k GPU Training, 8,000-Game Bayesian Weightage Factorial Study & Grandmaster Record (ADR-016)
 
 ### 15.1 BluffNet-XL Ultimate V2: 250,000 Transitions on RTX 3050 GPU
@@ -746,6 +759,27 @@ Where effective calling probability conditions on hypergeometric visibility ($p_
 ---
 
 *All benchmarks and experimental results are reproducible from repository source code and logs.*
+
+---
+
+## Section 17: Definitive SOTA Arbitration — Weightage × Thompson Factorial (33,600 Games, N=250)
+
+> Executed 2026-09-11 (solo-boss T1): one shared harness (`experiments/sota_arbitration.py`, current HEAD, fresh bot per game) arbitrating the A23-vs-N250 tension and the 3-seed separation note in a single design. Design lock: 4 regime-conditions × full 20-persona pool × N=250/matchup, strict 50/50 seats logged per game, master seed 20260911 (A23-identical) + second seed 20260912 on the two finalists. Regime definitions = A23 exact. Per-game records: `data/sota_arbitration.jsonl` (33,600 rows, hand-verified cells + seat balance).
+
+| Condition | W / L / D | Win rate [95% CI] |
+|---|---|---|
+| Balanced_TDMoE | 2596 / 11 / 2393 | 51.92% [50.5%, 53.3%] |
+| Heavy_Bayesian | 2591 / 11 / 2398 | 51.82% [50.4%, 53.2%] |
+| Dewey_EV_Overdrive | 2598 / 11 / 2391 | 51.96% [50.6%, 53.3%] |
+| Pure_Bayesian | 2649 / 11 / 2340 | 52.98% [51.6%, 54.4%] |
+
+Sensitivity (seed 20260912, finalists): Balanced 52.74% [51.4%, 54.1%] / PureBayes 53.60% [52.2%, 55.0%]. Combined: +0.96pp, z=1.36, **p=0.174**. Hybrid schedules mutually indistinguishable (pairwise p=0.89–0.97).
+
+Per-persona top deltas (PureBayes − Balanced): Aggressive_Bluffer +4.8%, MultiCard_Bomber +4.4% (active bluffers — where Bayesian counter-exploitation should dominate); conservative personas identical.
+
+**Verdict (Gate-1 reconciled): flat-null holds for fresh bots.** A23's ordering (+1.25pp at N=100) was sampling noise; the 3-seed 72–78% numbers are REAL continual-learning data (harness reuses one bot per cell — see §16 protocol note), mislabeled as fresh-bot eval. Both result sets kept under correct labels; the gap between them IS the personalization signal (claim b).
+
+**NN checkpoint evals (N=200, deterministic, same protocol as E3):** all checkpoints 0% wins vs competent bots (draw-lock dominated). Losses: final.pt (218 total; 27 vs Bayesian) vs v61_best.pt (149 total; 12 vs Bayesian, −47%) — **v61_best is the deployment checkpoint**. human_adapted.pt QUARANTINED: 96/200 losses vs Bayesian (48%) — synthetic-telemetry flattening destroyed the respond policy; recovery needs real telemetry.
 
 
 
