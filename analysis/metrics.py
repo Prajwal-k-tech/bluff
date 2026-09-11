@@ -79,3 +79,14 @@ def compute_deception_elo(ratings: Dict[str, float],
     new_ra = ra + k * (sa - ea)
     new_rb = rb + k * (sb - eb)
     return new_ra, new_rb
+
+
+def wilson_score_interval(successes: int, total: int, z: float = 1.96) -> Tuple[float, float]:
+    """Computes Wilson 95% score confidence interval for binomial proportions."""
+    if total == 0:
+        return 0.0, 0.0
+    p = successes / total
+    denom = 1.0 + (z ** 2) / total
+    center = (p + (z ** 2) / (2.0 * total)) / denom
+    margin = (z / denom) * math.sqrt((p * (1.0 - p) / total) + ((z ** 2) / (4.0 * (total ** 2))))
+    return max(0.0, center - margin), min(1.0, center + margin)

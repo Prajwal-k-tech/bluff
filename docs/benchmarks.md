@@ -715,6 +715,34 @@ Incorporating the **Terminal Defense Invariant** (ADR-016) into `AcademicBeastBo
 
 ---
 
+## Section 16: 3-Seed Sensitivity Verification Study (6,000 Games) & The Bluff Expected Value Theorem (ADR-017)
+
+### 16.1 Parallel 3-Seed Sensitivity Verification Study (`experiments/verify_bayesian_weightage_3seed.py`)
+To resolve the statistical power and Wilson 95% confidence interval criteria across multi-seed evaluations, we executed a 6,000-game factorial sweep across 3 independent master seeds (`20260911`, `20260912`, `20260913`) and 4 regimes evaluated against all 20 synthetic personas ($N=25$/persona/regime/seed $\times$ 3 seeds = 6,000 games total, 12 parallel CPU workers, strict 50/50 seat alternation):
+
+| Regime Name | Architecture Description | Total Games | Wins | Losses | Draws | Win Rate | Wilson 95% CI | Loss Rate | Net Score |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Balanced_TDMoE** | Sigmoidal S-Curve ($w_{\text{floor}}=0.15, \tau=8.0$) | 1,500 | 1,081 | **6** | 413 | 72.07% | [69.74%, 74.28%] | **0.40%** | +1,075 |
+| **Heavy_Bayesian** | Rapid Handover ($w_{\text{floor}}=0.05, \tau=3.0$) | 1,500 | 1,094 | 7 | 399 | 72.93% | [70.63%, 75.12%] | 0.47% | +1,087 |
+| **BET_Lookahead** | Closed-Form Bluff EV Lookahead (ADR-017) | 1,500 | 1,091 | 7 | 402 | 72.73% | [70.42%, 74.93%] | 0.47% | +1,084 |
+| **Pure_Bayesian** | Pure Southey-Dewey Combinatorial ($w_{\text{nn}}=0$) | 1,500 | **1,175** | 7 | **318** | **78.33%** | **[76.18%, 80.34%]** | 0.47% | **+1,168** |
+
+**Empirical & Theoretical Takeaways:**
+1. **Continuous Schedule Null Replicated:** Across the three hybrid schedules (`Balanced` vs `Heavy` vs `BET`), the Wilson 95% confidence intervals overlap completely ([69.74%, 74.28%] vs [70.63%, 75.12%] vs [70.42%, 74.93%]). Fine-tuning the continuous transition schedule parameter $\tau$ is statistically flat against stationary synthetic personas.
+2. **Pure Bayesian Superiority on Stationary Personas:** `Pure_Bayesian` achieves 78.33% [76.18%, 80.34%], exhibiting zero confidence interval overlap with the hybrid models ($p < 0.001$). Stationary synthetic personas possess fixed, unvarying strategy distributions; an exact Dirichlet posterior combined with hypergeometric card counting perfectly exploits stationary policies without exploratory loss.
+3. **The True Neural Value Proposition:** Neural network representations are not required to beat static, stationary bots. Rather, the neural network's fundamental value resides in:
+   - Providing game-theoretic unexploitability during the opening calibration window before observations accumulate (ADR-013).
+   - Enabling non-stationary policy adaptation against human players through the continuous telemetry ingestion pipeline (Task A17).
+
+### 16.2 The Bluff Expected Value Theorem (BET, ADR-017)
+In free-rank Bluff, candidate play action $a = (k, R)$ with opponent call probability $p_c$ yields closed-form expected hand margin delta:
+$$\mathbb{E}[\Delta_{\text{margin}}(\text{honest})] = k + p_c \cdot (S_{\text{pile}} + k)$$
+$$\mathbb{E}[\Delta_{\text{margin}}(\text{bluff})] = k - p_c^{\text{eff}} \cdot (S_{\text{pile}} + k)$$
+$$\text{Break-Even Calling Threshold: } p_c^* = \frac{k}{S_{\text{pile}} + k}$$
+Where effective calling probability conditions on hypergeometric visibility ($p_c^{\text{eff}} = \max(p_c, \mathbb{P}(\text{catch}))$). Integrated into `AcademicBeastBot.decide_play`, this invariant exponentially penalizes EV-negative bluffs into deep piles while unlocking profitable bluffs on empty piles against passive opponents.
+
+---
+
 *All benchmarks and experimental results are reproducible from repository source code and logs.*
 
 

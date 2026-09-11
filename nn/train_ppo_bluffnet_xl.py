@@ -558,6 +558,7 @@ def train_ppo_bluffnet_xl(
         star = ""
         if net_score > best_net_score:
             best_net_score = net_score
+            best_wr = wr
             star = " ★"
             os.makedirs(os.path.dirname(checkpoint_out), exist_ok=True)
             torch.save({

@@ -47,6 +47,7 @@ class AcademicBeastBot(BotInterface):
         nn_floor: float = 0.15,
         schedule_type: str = "exponential",
         use_nn: bool = True,
+        bet_lookahead: bool = True,
     ):
         self.thompson_sampling = thompson_sampling
         self.risk_aversion = risk_aversion
@@ -54,6 +55,7 @@ class AcademicBeastBot(BotInterface):
         self.nn_floor = nn_floor
         self.schedule_type = schedule_type
         self.use_nn = use_nn
+        self.bet_lookahead = bet_lookahead
         self.model = OpponentModel()
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
@@ -250,16 +252,34 @@ class AcademicBeastBot(BotInterface):
                 is_honest = all(c.rank == claimed_rank for c in played_cards)
                 claim_size = len(played_cards)
 
-                if is_honest:
-                    u_bayes = 1.0 + (call_freq - 0.35) * 1.5 + (claim_size - 1) * 0.4
-                else:
-                    if call_freq > 0.50 or (top_arch == "Calling_Station" and arch_conf >= 0.40):
-                        u_bayes = 0.0
+                if self.bet_lookahead:
+                    # Closed-Form Bluff Expected Value Theorem (BET) Lookahead
+                    if is_honest:
+                        ev_honest = claim_size + call_freq * (pile_size + claim_size)
+                        u_bayes = 1.0 + 0.20 * ev_honest
                     else:
-                        ev_bluff = (1.0 - call_freq) * claim_size - call_freq * (pile_size + claim_size)
-                        unseen_count = pool.get(claimed_rank, 0)
-                        plausibility = min(1.0, unseen_count / max(1, claim_size))
-                        u_bayes = max(0.05, 1.0 + ev_bluff * 0.25 * plausibility)
+                        if top_arch == "Calling_Station" and arch_conf >= 0.40:
+                            u_bayes = 0.001
+                        else:
+                            unseen_count = pool.get(claimed_rank, 0)
+                            p_catch = 1.0 if unseen_count < claim_size else max(0.0, 1.0 - (unseen_count / max(1, claim_size)))
+                            effective_call_p = max(call_freq, p_catch)
+                            ev_bluff = claim_size - effective_call_p * (pile_size + claim_size)
+                            if ev_bluff < 0:
+                                u_bayes = max(0.001, math.exp(ev_bluff * 0.40))
+                            else:
+                                u_bayes = 1.0 + 0.20 * ev_bluff
+                else:
+                    if is_honest:
+                        u_bayes = 1.0 + (call_freq - 0.35) * 1.5 + (claim_size - 1) * 0.4
+                    else:
+                        if call_freq > 0.50 or (top_arch == "Calling_Station" and arch_conf >= 0.40):
+                            u_bayes = 0.0
+                        else:
+                            ev_bluff = (1.0 - call_freq) * claim_size - call_freq * (pile_size + claim_size)
+                            unseen_count = pool.get(claimed_rank, 0)
+                            plausibility = min(1.0, unseen_count / max(1, claim_size))
+                            u_bayes = max(0.05, 1.0 + ev_bluff * 0.25 * plausibility)
 
                 probs[action_idx] = p_nn[action_idx] * (w_nn + w_bayes * u_bayes)
 
@@ -399,6 +419,7 @@ class AcademicBeastBot(BotInterface):
             "decay_tau": self.decay_tau,
             "nn_floor": self.nn_floor,
             "schedule_type": self.schedule_type,
+            "bet_lookahead": self.bet_lookahead,
         }
 
     @classmethod
@@ -410,6 +431,7 @@ class AcademicBeastBot(BotInterface):
             decay_tau=d.get("decay_tau", 8.0),
             nn_floor=d.get("nn_floor", 0.15),
             schedule_type=d.get("schedule_type", "sigmoidal"),
+            bet_lookahead=d.get("bet_lookahead", True),
         )
         if "model" in d:
             bot.model = OpponentModel.from_dict(d["model"])
