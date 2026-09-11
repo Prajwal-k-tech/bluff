@@ -45,11 +45,13 @@ class AcademicBeastBot(BotInterface):
         risk_aversion: float = 1.0,
         decay_tau: float = 8.0,
         nn_floor: float = 0.15,
+        schedule_type: str = "exponential",
     ):
         self.thompson_sampling = thompson_sampling
         self.risk_aversion = risk_aversion
         self.decay_tau = decay_tau
         self.nn_floor = nn_floor
+        self.schedule_type = schedule_type
         self.model = OpponentModel()
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
@@ -60,11 +62,12 @@ class AcademicBeastBot(BotInterface):
         self.opp_calls: int = 0
         self.opp_passes: int = 0
 
-        # Load BluffNet if available for state evaluation
-        self.net: Optional[BluffNet] = None
+        # Load BluffNet or BluffNetXL if available for state evaluation
+        self.net: Optional[object] = None
         self.encoder = StateEncoder()
         cand_paths = [
             checkpoint_path,
+            "nn/checkpoints/bluffnet_xl_league.pt",
             "nn/checkpoints/final.pt",
             "nn/checkpoints/synthetic_league.pt",
             "nn/checkpoints/v7_best.pt",
@@ -72,8 +75,14 @@ class AcademicBeastBot(BotInterface):
         for p in cand_paths:
             if p and os.path.exists(p):
                 try:
-                    from nn.training import load_checkpoint
-                    self.net = load_checkpoint(p)
+                    data = torch.load(p, weights_only=True)
+                    if isinstance(data, dict) and data.get("architecture") == "BluffNetXL":
+                        from nn.model import BluffNetXL
+                        self.net = BluffNetXL(state_dim=39, action_dim=54, hidden_dim=512)
+                        self.net.load_state_dict(data["model_state_dict"])
+                    else:
+                        from nn.training import load_checkpoint
+                        self.net = load_checkpoint(p)
                     break
                 except Exception:
                     continue
@@ -140,7 +149,15 @@ class AcademicBeastBot(BotInterface):
         tau_val = tau if tau is not None else self.decay_tau
         floor_val = w_floor if w_floor is not None else self.nn_floor
         n_obs = self.model.total_actions_observed
-        w_nn = floor_val + (1.0 - floor_val) * math.exp(-n_obs / max(0.5, tau_val))
+
+        if getattr(self, "schedule_type", "sigmoidal") == "sigmoidal":
+            # S-curve transition (ADR-013): maintains high neural prior through turn 4,
+            # then smoothly transitions into Bayesian counter-exploitation as variance drops.
+            sig = 1.0 / (1.0 + math.exp((n_obs - 5.0) / 2.0))
+            w_nn = floor_val + (1.0 - floor_val) * sig
+        else:
+            w_nn = floor_val + (1.0 - floor_val) * math.exp(-n_obs / max(0.5, tau_val))
+
         w_nn = max(floor_val, min(1.0, w_nn))
         w_bayes = 1.0 - w_nn
         return w_nn, w_bayes

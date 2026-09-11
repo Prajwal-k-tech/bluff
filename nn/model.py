@@ -82,6 +82,72 @@ class BluffNet(nn.Module):
         return int(torch.multinomial(probs, 1).item())
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+            nn.GELU(),
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+        )
+        self.act = nn.GELU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.act(x + self.net(x))
+
+
+class BluffNetXL(nn.Module):
+    """Deep residual actor-critic architecture for Bluff (~650k parameters).
+    
+    Features:
+    - 512-dim embedding with LayerNorm and GELU activations.
+    - Dual residual highway blocks preventing vanishing gradients during deep RL.
+    - Decoupled actor and critic projection heads with non-linear bottlenecks.
+    """
+
+    def __init__(self, state_dim: int = 39, action_dim: int = ACTION_DIM, hidden_dim: int = 512):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+        )
+        self.blocks = nn.Sequential(
+            ResidualBlock(hidden_dim),
+            ResidualBlock(hidden_dim),
+        )
+        self.actor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, action_dim),
+        )
+        self.critic = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        features = self.stem(state)
+        features = self.blocks(features)
+        return self.actor(features), self.critic(features)
+
+    def act(self, state: torch.Tensor, legal_mask: torch.Tensor,
+            deterministic: bool = False) -> int:
+        device = next(self.parameters()).device
+        state = state.to(device)
+        legal_mask = legal_mask.to(device)
+        logits, _ = self.forward(state)
+        masked = logits.clone()
+        masked[~legal_mask] = float("-inf")
+        probs = F.softmax(masked, dim=-1)
+        if deterministic:
+            return int(torch.argmax(probs).item())
+        return int(torch.multinomial(probs, 1).item())
+
+
 def build_legal_actions(hand: List[Card], can_call: bool,
                         can_pass: bool,
                         respond_only: bool = False) -> torch.Tensor:
