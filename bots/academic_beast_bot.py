@@ -341,7 +341,7 @@ class AcademicBeastBot(BotInterface):
         )
         if top_arch == "Honest_Rock" and arch_conf >= 0.50 and counting_p < 0.999:
             return False
-        if top_arch == "Hyper_Maniac" and arch_conf >= 0.50 and pile_size <= 4:
+        if (top_arch == "Hyper_Maniac" or mean_bluff_p >= 0.35) and pile_size <= 4:
             deception_discount += 0.15
 
         # 5. TD-MoE Weighting & Neural Tactical Modulation
@@ -383,6 +383,7 @@ class AcademicBeastBot(BotInterface):
             "risk_aversion": self.risk_aversion,
             "decay_tau": self.decay_tau,
             "nn_floor": self.nn_floor,
+            "schedule_type": self.schedule_type,
         }
 
     @classmethod
@@ -393,6 +394,7 @@ class AcademicBeastBot(BotInterface):
             risk_aversion=d.get("risk_aversion", 1.0),
             decay_tau=d.get("decay_tau", 8.0),
             nn_floor=d.get("nn_floor", 0.15),
+            schedule_type=d.get("schedule_type", "sigmoidal"),
         )
         if "model" in d:
             bot.model = OpponentModel.from_dict(d["model"])

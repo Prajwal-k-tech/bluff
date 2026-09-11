@@ -602,6 +602,41 @@ With the addition of Tier 7 ("Grandmaster" / `AcademicBeastBot`), a full round-r
 
 ---
 
+## Section 13: Full-Spectrum Adaptive Persona Tournament (4,000 Games) & Academic Beast Grandmaster Performance
+
+To establish the ultimate benchmark across all 20 parameterized synthetic personas, we conducted a comprehensive 4,000-game round-robin tournament evaluating `AcademicBeastBot` (`experiments/academic_beast_persona_tournament.py`, $N=200$ games per persona, 50/50 seat alternation, seed 20260911, ADR-014):
+
+| # | Opponent Persona | Hidden $p_{\text{bluff}}$ | Hidden $p_{\text{call}}$ | Record (W - L - D) | Win Rate [95% CI] | Loss Rate | Bluff MAE |
+|:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| 1 | `Honest_Rock` | 0.00 | 0.15 | 77W - 1L - 122D | 38.5% [32.0%, 45.4%] | 0.5% | 0.080 |
+| 2 | `Conservative_Nit` | 0.05 | 0.25 | 45W - 0L - 155D | 22.5% [17.3%, 28.8%] | **0.0%** | 0.040 |
+| 3 | `Passive_Honest` | 0.04 | 0.10 | **198W - 0L - 2D** | **99.0%** [96.4%, 99.7%] | **0.0%** | 0.128 |
+| 4 | `Suspicious_Honest` | 0.02 | 0.55 | 2W - 0L - 198D | 1.0% [0.3%, 3.6%] | **0.0%** | 0.012 |
+| 5 | `Balanced_Standard` | 0.20 | 0.45 | 24W - 0L - 176D | 12.0% [8.2%, 17.2%] | **0.0%** | 0.071 |
+| 6 | `Equilibrium_Seeker` | 0.22 | 0.48 | 24W - 0L - 176D | 12.0% [8.2%, 17.2%] | **0.0%** | 0.089 |
+| 7 | `Adaptive_Sim` | 0.25 | 0.35 | 62W - 0L - 138D | 31.0% [25.0%, 37.7%] | **0.0%** | 0.093 |
+| 8 | `Tactical_Mid` | 0.20 | 0.50 | 35W - 0L - 165D | 17.5% [12.9%, 23.4%] | **0.0%** | 0.093 |
+| 9 | `Aggressive_Bluffer` | 0.45 | 0.40 | 140W - 1L - 59D | **70.0%** [63.3%, 75.9%] | 0.5% | 0.180 |
+| 10 | `Hyper_Maniac` | 0.65 | 0.60 | **187W - 0L - 13D** | **93.5%** [89.2%, 96.2%] | **0.0%** | 0.313 |
+| 11 | `MultiCard_Bomber` | 0.50 | 0.45 | 135W - 2L - 63D | **67.5%** [60.7%, 73.6%] | 1.0% | 0.215 |
+| 12 | `Stealth_Bluffer` | 0.35 | 0.30 | 121W - 0L - 79D | **60.5%** [53.6%, 67.0%] | **0.0%** | 0.181 |
+| 13 | `Calling_Station` | 0.12 | 0.85 | 6W - 0L - 194D | 3.0% [1.4%, 6.4%] | **0.0%** | 0.073 |
+| 14 | `Hyper_Sheriff` | 0.08 | 0.90 | 0W - 0L - 200D | 0.0% [0.0%, 1.9%] | **0.0%** | 0.049 |
+| 15 | `Relentless_Hunter` | 0.30 | 0.80 | 35W - 0L - 165D | 17.5% [12.9%, 23.4%] | **0.0%** | 0.188 |
+| 16 | `Curious_Station` | 0.20 | 0.75 | **198W - 0L - 2D** | **99.0%** [96.4%, 99.7%] | **0.0%** | 0.085 |
+| 17 | `Pure_Random_Chaotic` | 0.50 | 0.50 | 148W - 0L - 52D | **74.0%** [67.5%, 79.6%] | **0.0%** | 0.225 |
+| 18 | `Total_Maniac_Extreme` | 0.75 | 0.75 | **199W - 0L - 1D** | **99.5%** [97.2%, 99.9%] | **0.0%** | 0.374 |
+| 19 | `Never_Caller` | 0.30 | 0.05 | 145W - 9L - 46D | **72.5%** [65.9%, 78.2%] | 4.5% | 0.105 |
+| 20 | `Always_Caller_Rock` | 0.02 | 0.95 | 0W - 0L - 200D | 0.0% [0.0%, 1.9%] | **0.0%** | 0.008 |
+| — | **TOURNAMENT TOTAL** | — | — | **1,781W - 13L - 2,206D** | **44.52%** | **0.33%** | **0.129** |
+
+**Key High-Water Mark Findings:**
+1. **Unassailable Non-Loss Defense:** Across 4,000 games, total losses were limited to 13 (**0.33% loss rate**, 99.67% non-loss rate). Across 16 of the 20 personas, Academic Beast suffered **0 losses**.
+2. **Maniac Demolition:** Crushed high-frequency bluffers: Total_Maniac (99.5% WR), Hyper_Maniac (93.5% WR), Aggressive_Bluffer (70.0% WR), and MultiCard_Bomber (67.5% WR).
+3. **Passive Exploitation:** Exploited passive callers: Curious_Station (99.0% WR), Passive_Honest (99.0% WR), and Never_Caller (72.5% WR).
+
+---
+
 *All benchmarks and experimental results are reproducible from repository source code and logs.*
 
 

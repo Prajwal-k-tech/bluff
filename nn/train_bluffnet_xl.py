@@ -19,9 +19,12 @@ sys.path.insert(0, os.path.abspath("."))
 
 from cards import Card, Rank
 from game import GameState, Action
+from bots.base import pending_claims_from_actions, pool_by_rank
 from nn.model import (
     BluffNetXL,
     ACTION_DIM,
+    CALL_ACTION,
+    PASS_ACTION,
     action_index,
     build_legal_actions,
 )
@@ -59,6 +62,9 @@ def generate_league_data(target_samples: int = 30000) -> Tuple[torch.Tensor, tor
             if not active_hand:
                 break
 
+            pending = pending_claims_from_actions(game.actions)
+            pool = pool_by_rank(active_hand, pending)
+
             context = {
                 "opponent_hand_size": len(opp_hand),
                 "pile_size": game.get_pile_size(),
@@ -66,7 +72,7 @@ def generate_league_data(target_samples: int = 30000) -> Tuple[torch.Tensor, tor
                 "turn_number": turn,
                 "can_pass": len(game.draw_pile) > 0,
                 "last_action": game.actions[-1] if game.actions else None,
-                "cards_remaining": {r: 4 for r in Rank},
+                "cards_remaining": pool,
                 "opponent_call_rate": persona.true_call_rate,
                 "opponent_bluff_revealed": persona.true_bluff_rate,
                 "my_bluff_rate": 0.20,
@@ -99,8 +105,40 @@ def generate_league_data(target_samples: int = 30000) -> Tuple[torch.Tensor, tor
             resp_hand = game.get_hand(opp).cards
             if not resp_hand:
                 break
+
+            can_pass = len(game.draw_pile) > 0
             call = persona.decide_call(game.actions[-1], context)
-            if call or len(game.draw_pile) == 0:
+            if not can_pass:
+                call = True
+
+            resp_pool = pool_by_rank(resp_hand, pending_claims_from_actions(game.actions))
+            resp_context = {
+                "opponent_hand_size": len(active_hand),
+                "pile_size": game.get_pile_size(),
+                "draw_pile_size": len(game.draw_pile),
+                "turn_number": turn,
+                "can_pass": can_pass,
+                "last_action": game.actions[-1],
+                "cards_remaining": resp_pool,
+                "opponent_call_rate": persona.true_call_rate,
+                "opponent_bluff_revealed": persona.true_bluff_rate,
+                "my_bluff_rate": 0.20,
+                "my_bluff_success_rate": 0.60,
+            }
+
+            s_resp = encoder.encode(resp_hand, resp_context)
+            m_resp = build_legal_actions(resp_hand, can_call=True, can_pass=can_pass, respond_only=True)
+            a_resp = CALL_ACTION if call else PASS_ACTION
+
+            states.append(s_resp)
+            actions.append(a_resp)
+            masks.append(m_resp)
+            samples += 1
+
+            if samples >= target_samples:
+                break
+
+            if call:
                 game.call_bluff(opp)
             else:
                 game.pass_turn(passer=opp)

@@ -88,5 +88,55 @@
     "final_val_loss": 14.11567574840481,
     "final_val_acc": 0.211864406779661,
     "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 12:51:38",
+    "samples_ingested": 64,
+    "total_buffer_size": 869,
+    "pre_loss": 22.093165054917336,
+    "pre_acc": 0.18461538461538463,
+    "final_val_loss": 17.406104986942733,
+    "final_val_acc": 0.2,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:03:29",
+    "samples_ingested": 64,
+    "total_buffer_size": 948,
+    "pre_loss": 26.5765849368673,
+    "pre_acc": 0.176056338028169,
+    "final_val_loss": 21.27208716432813,
+    "final_val_acc": 0.19014084507042253,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:03:35",
+    "samples_ingested": 500,
+    "total_buffer_size": 1448,
+    "pre_loss": 20.78438998806861,
+    "pre_acc": 0.18433179723502305,
+    "final_val_loss": 10.182911305932954,
+    "final_val_acc": 0.20276497695852536,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:04:43",
+    "samples_ingested": 64,
+    "total_buffer_size": 1527,
+    "pre_loss": 19.45885057740857,
+    "pre_acc": 0.1965065502183406,
+    "final_val_loss": 12.3741429091541,
+    "final_val_acc": 0.17903930131004367,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:06:31",
+    "samples_ingested": 64,
+    "total_buffer_size": 1606,
+    "pre_loss": 20.874287541707357,
+    "pre_acc": 0.17916666666666667,
+    "final_val_loss": 13.140094502766926,
+    "final_val_acc": 0.16666666666666666,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
   }
 ]
