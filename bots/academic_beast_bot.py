@@ -78,7 +78,7 @@ class AcademicBeastBot(BotInterface):
             for p in cand_paths:
                 if p and os.path.exists(p):
                     try:
-                        data = torch.load(p, weights_only=True)
+                        data = torch.load(p, map_location="cpu", weights_only=True)
                         if isinstance(data, dict) and data.get("architecture") == "BluffNetXL":
                             from nn.model import BluffNetXL
                             self.net = BluffNetXL(state_dim=39, action_dim=54, hidden_dim=512)
@@ -318,6 +318,12 @@ class AcademicBeastBot(BotInterface):
         if counting_p >= 0.999:
             return True
 
+        # Terminal Defense Invariant (ADR-016):
+        # If opponent emptied hand (opp_hand_size == 0), passing guarantees 100% loss.
+        # Calling strictly dominates passing for any non-zero bluff probability.
+        if opp_hand_size == 0:
+            return True
+
         # 2. Bayesian Opponent Modeling with Archetype-Conditioned Thompson Sampling (ADR-012)
         mean_bluff_p = self.model.overall_bluff.mean()
         if self.thompson_sampling and mean_bluff_p >= 0.15:
@@ -335,6 +341,12 @@ class AcademicBeastBot(BotInterface):
         base_threshold = 0.50
         stake_adjustment = math.tanh((pile_size - 3.0) / 6.0) * 0.25
         deception_discount = (overall_bluff_p - 0.20) * 0.50
+
+        # Terminal Urgency Discount (ADR-016):
+        # As opponent hand drops near zero (opp_hand_size <= 2), stake penalty is neutralized.
+        if opp_hand_size <= 2:
+            urgency_discount = (3.0 - opp_hand_size) * 0.15
+            deception_discount += urgency_discount
 
         # Archetype adjustments
         top_arch, arch_conf = self.classifier.top_archetype(

@@ -258,5 +258,15 @@
     "final_val_loss": 11.032849966701578,
     "final_val_acc": 0.1801566579634465,
     "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:23:52",
+    "samples_ingested": 64,
+    "total_buffer_size": 2633,
+    "pre_loss": 19.650044145922976,
+    "pre_acc": 0.18781725888324874,
+    "final_val_loss": 10.136083036509866,
+    "final_val_acc": 0.18781725888324874,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
   }
 ]
