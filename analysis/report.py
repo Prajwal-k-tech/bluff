@@ -54,6 +54,7 @@ class BotStats:
         self.calls = 0
         self.calls_correct = 0
         self.passes = 0
+        self.lock_hands: List[int] = []
 
     def observe(self, rec: dict) -> None:
         action_type = rec.get("action_type")
@@ -86,13 +87,25 @@ class BotStats:
     def call_accuracy(self) -> float:
         return self.calls_correct / self.calls if self.calls else 0.0
 
+    @property
+    def a_call(self) -> float:
+        """Caller-perspective call accuracy (A_call = TP / (TP + FP))."""
+        return self.call_accuracy
+
+    @property
+    def s_lock(self) -> float:
+        """Lock-point hand size at draw exhaustion (turn ≈ 24)."""
+        return sum(self.lock_hands) / len(self.lock_hands) if self.lock_hands else 0.0
+
     def as_row(self, name: str) -> List[str]:
+        s_lock_str = f"{self.s_lock:.1f}" if self.lock_hands else "—"
         return [
             name,
             str(self.plays),
             f"{self.bluff_rate:.1%} ({self.bluffs}/{self.plays})",
             f"{self.bluff_success:.1%}",
             f"{self.call_accuracy:.1%} ({self.calls_correct}/{self.calls})",
+            s_lock_str,
             str(self.passes),
         ]
 
@@ -104,6 +117,7 @@ class Report:
             lambda: [0, 0])  # bucket -> [bluffs, plays]
         self.matchups: Dict[tuple, Dict[str, int]] = defaultdict(
             lambda: {"a": 0, "b": 0, "draw": 0})
+        self._game_seen_lock: Dict[str, set] = defaultdict(set)
 
     def feed(self, path: str) -> int:
         """Consume one JSONL file. Returns number of records read."""
@@ -126,6 +140,14 @@ class Report:
         if kind == "action":
             mode = rec.get("bot_mode") or "?"
             self.bots[mode].observe(rec)
+            gid = rec.get("game_id", "")
+            turn = rec.get("turn_number")
+            if gid and turn is not None and turn >= 24:
+                if mode not in self._game_seen_lock[gid]:
+                    self._game_seen_lock[gid].add(mode)
+                    hsize = rec.get("hand_size")
+                    if hsize is not None:
+                        self.bots[mode].lock_hands.append(int(hsize))
             if rec.get("action_type") == "play" and rec.get("was_bluff") is not None:
                 bucket = _bucket(int(rec.get("hand_size") or 0))
                 self.bluff_by_hand[bucket][1] += 1
@@ -154,8 +176,8 @@ class Report:
         if markdown:
             out.write("\n### Per-bot behavior\n\n")
             out.write("| Bot | Plays | Bluff rate | Bluff success | "
-                      "Call accuracy | Passes |\n")
-            out.write("|---|---|---|---|---|---|\n")
+                      "Call accuracy (A_call) | S_lock | Passes |\n")
+            out.write("|---|---|---|---|---|---|---|\n")
             for name in sorted(self.bots):
                 s = self.bots[name]
                 if s.plays or s.calls or s.passes:
@@ -164,14 +186,14 @@ class Report:
         else:
             out.write("\nPER-BOT BEHAVIOR\n")
             out.write(f"  {'Bot':<14} {'Plays':>7} {'BluffRate':>16} "
-                      f"{'BluffOK':>8} {'CallAcc':>16} {'Passes':>7}\n")
-            out.write("  " + "-" * 74 + "\n")
+                      f"{'BluffOK':>8} {'CallAcc (A_call)':>18} {'S_lock':>8} {'Passes':>7}\n")
+            out.write("  " + "-" * 85 + "\n")
             for name in sorted(self.bots):
                 s = self.bots[name]
                 if s.plays or s.calls or s.passes:
                     r = s.as_row(name)
                     out.write(f"  {r[0]:<14} {r[1]:>7} {r[2]:>16} "
-                              f"{r[3]:>8} {r[4]:>16} {r[5]:>7}\n")
+                              f"{r[3]:>8} {r[4]:>18} {r[5]:>8} {r[6]:>7}\n")
 
         if markdown:
             out.write("\n### Bluff rate by hand size\n\n")

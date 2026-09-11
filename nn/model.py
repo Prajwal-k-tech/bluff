@@ -71,12 +71,12 @@ class BluffNet(nn.Module):
         encoder outputs on CPU even when the net lives on CUDA.
         """
         device = next(self.parameters()).device
-        state = state.to(device)
-        legal_mask = legal_mask.to(device)
+        state = state.to(device=device, dtype=torch.float32)
+        legal_mask = legal_mask.to(device=device, dtype=torch.bool)
         logits, _ = self.forward(state)
         masked = logits.clone()
         masked[~legal_mask] = float("-inf")
-        probs = F.softmax(masked, dim=-1)
+        probs = F.softmax(masked, dim=-1).cpu()
         if deterministic:
             return int(torch.argmax(probs).item())
         return int(torch.multinomial(probs, 1).item())
@@ -137,12 +137,12 @@ class BluffNetXL(nn.Module):
     def act(self, state: torch.Tensor, legal_mask: torch.Tensor,
             deterministic: bool = False) -> int:
         device = next(self.parameters()).device
-        state = state.to(device)
-        legal_mask = legal_mask.to(device)
+        state = state.to(device=device, dtype=torch.float32)
+        legal_mask = legal_mask.to(device=device, dtype=torch.bool)
         logits, _ = self.forward(state)
         masked = logits.clone()
         masked[~legal_mask] = float("-inf")
-        probs = F.softmax(masked, dim=-1)
+        probs = F.softmax(masked, dim=-1).cpu()
         if deterministic:
             return int(torch.argmax(probs).item())
         return int(torch.multinomial(probs, 1).item())
