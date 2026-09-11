@@ -35,6 +35,7 @@ from bots.base import (
     pool_by_rank,
 )
 from bots.bayesian_bot import BluffTracker, CardCounter, OpponentModel
+from bots.archetype_classifier import ArchetypeClassifier  # ADR-012 wiring (Tess)
 from cards import Card, Rank
 from game import Action
 from nn.model import (
@@ -65,7 +66,7 @@ class HybridBot(BotInterface):
         self,
         checkpoint_path: Optional[str] = None,
         thompson_sampling: bool = True,
-        w_model_cap: float = 0.75,
+        w_model_cap: float = 0.50,  # ADR-012 decision #1: general population cap (Tess)
         exploit_mult: float = 2.5,
         call_mult: float = 1.8,
         variance_scaled: bool = True,
@@ -106,12 +107,23 @@ class HybridBot(BotInterface):
 
         self.model = OpponentModel()
         self.counter = CardCounter()
+        # ADR-012 decision #2: archetype-conditioned Thompson sampling (Tess)
+        self.classifier = ArchetypeClassifier()
+        self._obs_bluffs = 0
+        self._obs_honest = 0
+        self._obs_calls = 0
+        self._obs_passes = 0
         self.bluff_tracker = BluffTracker()
         self.bluff_threshold = 0.55
         self.call_threshold = 0.50
 
     def reset(self):
         self.counter = CardCounter()
+        # ADR-012: per-game archetype evidence reset (Tess)
+        self._obs_bluffs = 0
+        self._obs_honest = 0
+        self._obs_calls = 0
+        self._obs_passes = 0
 
     def _remaining_counts(self, hand: List[Card], game_state: dict) -> dict:
         pending = game_state.get("pending_claims")
@@ -154,11 +166,32 @@ class HybridBot(BotInterface):
         w_bayes = 1.0 - w_nn
         return w_nn, w_bayes
 
+    def _use_thompson(self) -> bool:
+        """ADR-012 decision #2 (wiring by Tess): archetype-conditioned sampling.
+
+        Posterior sampling only against an inferred Hyper Maniac cluster — the
+        12k persona study showed sampling is +15-37% relative wins vs maniacs
+        but counterproductive vs honest rocks. Below 5 observations:
+        deterministic (the safe default against unknown opponents).
+        """
+        if not self.thompson_sampling:
+            return False
+        total_obs = (self._obs_bluffs + self._obs_honest
+                     + self._obs_calls + self._obs_passes)
+        if total_obs < 5:
+            return False
+        name, _conf = self.classifier.top_archetype(
+            self._obs_bluffs, self._obs_honest, self._obs_calls, self._obs_passes
+        )
+        # NOTE: archetype names are underscore-style ("Hyper_Maniac") — matched
+        # against the classifier's actual constants, not docstring phrasing.
+        return name == "Hyper_Maniac"
+
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
             return ([], Rank.TWO)
 
-        if self.thompson_sampling:
+        if self._use_thompson():
             call_freq = self.model.sample_call_frequency()
             overall_bluff_p = self.model.overall_bluff.sample()
         else:
@@ -309,7 +342,7 @@ class HybridBot(BotInterface):
         if counting_p >= 0.999:
             return True
 
-        if self.thompson_sampling:
+        if self._use_thompson():
             model_p = self.model.sample_bluff_probability(
                 opp_hand_size, claimed_rank, claim_size
             )
@@ -381,6 +414,20 @@ class HybridBot(BotInterface):
         self.model.observe_action(action, opponent_hand_size)
         if action.cards_played:
             self.counter.update_with_play(action.cards_played)
+        # ADR-012: opponent-behavior evidence for archetype classification (Tess)
+        pid = getattr(self, "player_id", None)
+        if pid is not None:
+            opp = 1 - pid
+            if action.player == opp:
+                if action.cards_played and action.bluff_called:
+                    if action.was_bluff:
+                        self._obs_bluffs += 1
+                    else:
+                        self._obs_honest += 1
+                elif not action.cards_played:
+                    self._obs_passes += 1
+            elif action.bluff_called:
+                self._obs_calls += 1
 
     def to_dict(self) -> dict:
         return {
