@@ -167,16 +167,20 @@ class HybridBot(BotInterface):
         return w_nn, w_bayes
 
     def _use_thompson(self) -> bool:
-        """ADR-012 decision #2 (wiring by Tess; iteration 2): archetype-
-        conditioned sampling fed by the OpponentModel's FULL posterior.
+        """ADR-012 decision #2 (wiring by Tess; iteration 3): bluff-rate-gated
+        posterior sampling.
 
-        Iteration-1 falsification: revealed-only evidence counters are blind
-        to uncalled bluffs (info model), so conditioning never activated vs
-        maniacs — conditioned ≡ never_thompson on both maniac personas.
-        Fix: the classifier consumes the model's Beta posterior pseudo-counts
-        (alpha=bluff evidence, beta=honest evidence), which update on EVERY
-        opponent play. Still gated on Hyper_Maniac top-archetype with a
-        5-observation floor (deterministic against unknown/low-evidence).
+        Iteration history: (1) revealed-only classifier evidence was blind to
+        uncalled bluffs — conditioning never fired vs maniacs (falsified by
+        the resolution matrix, 0/4). (2) full-posterior pseudo-counts through
+        the classifier still mis-routed: its Hyper_Maniac anchor is calibrated
+        at ~0.80 mean bluff rate, so real maniacs (0.65-0.75) classified as
+        Balanced_GTO. (3) THIS VERSION — test the quantity that matters
+        directly: sample when the model's inferred opponent bluff rate is
+        high enough that exploratory calls have positive EV. The 12k study:
+        Thompson wins vs bluff-rate >~0.35-0.45 (+15-37% vs maniacs), loses
+        vs rocks. The classifier itself remains in use for the live
+        archetype-telemetry stream (server bot_adaptation broadcasts).
         """
         if not self.thompson_sampling:
             return False
@@ -186,12 +190,7 @@ class HybridBot(BotInterface):
         observed = (ob.alpha + ob.beta) - (3 + 7)  # minus the Beta(3,7) prior
         if observed < 5:
             return False
-        name, _conf = self.classifier.top_archetype(
-            ob.alpha, ob.beta, self._obs_calls, self._obs_passes
-        )
-        # NOTE: archetype names are underscore-style ("Hyper_Maniac") — matched
-        # against the classifier's actual constants, not docstring phrasing.
-        return name == "Hyper_Maniac"
+        return ob.mean() >= 0.35
 
     def decide_play(self, hand: List[Card], game_state: dict) -> Tuple[List[Card], Rank]:
         if not hand:
