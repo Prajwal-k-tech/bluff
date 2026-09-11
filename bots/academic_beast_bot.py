@@ -46,12 +46,14 @@ class AcademicBeastBot(BotInterface):
         decay_tau: float = 8.0,
         nn_floor: float = 0.15,
         schedule_type: str = "exponential",
+        use_nn: bool = True,
     ):
         self.thompson_sampling = thompson_sampling
         self.risk_aversion = risk_aversion
         self.decay_tau = decay_tau
         self.nn_floor = nn_floor
         self.schedule_type = schedule_type
+        self.use_nn = use_nn
         self.model = OpponentModel()
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
@@ -65,27 +67,28 @@ class AcademicBeastBot(BotInterface):
         # Load BluffNet or BluffNetXL if available for state evaluation
         self.net: Optional[object] = None
         self.encoder = StateEncoder()
-        cand_paths = [
-            checkpoint_path,
-            "nn/checkpoints/bluffnet_xl_league.pt",
-            "nn/checkpoints/final.pt",
-            "nn/checkpoints/synthetic_league.pt",
-            "nn/checkpoints/v7_best.pt",
-        ]
-        for p in cand_paths:
-            if p and os.path.exists(p):
-                try:
-                    data = torch.load(p, weights_only=True)
-                    if isinstance(data, dict) and data.get("architecture") == "BluffNetXL":
-                        from nn.model import BluffNetXL
-                        self.net = BluffNetXL(state_dim=39, action_dim=54, hidden_dim=512)
-                        self.net.load_state_dict(data["model_state_dict"])
-                    else:
-                        from nn.training import load_checkpoint
-                        self.net = load_checkpoint(p)
-                    break
-                except Exception:
-                    continue
+        if self.use_nn:
+            cand_paths = [
+                checkpoint_path,
+                "nn/checkpoints/bluffnet_xl_league.pt",
+                "nn/checkpoints/final.pt",
+                "nn/checkpoints/synthetic_league.pt",
+                "nn/checkpoints/v7_best.pt",
+            ]
+            for p in cand_paths:
+                if p and os.path.exists(p):
+                    try:
+                        data = torch.load(p, weights_only=True)
+                        if isinstance(data, dict) and data.get("architecture") == "BluffNetXL":
+                            from nn.model import BluffNetXL
+                            self.net = BluffNetXL(state_dim=39, action_dim=54, hidden_dim=512)
+                            self.net.load_state_dict(data["model_state_dict"])
+                        else:
+                            from nn.training import load_checkpoint
+                            self.net = load_checkpoint(p)
+                        break
+                    except Exception:
+                        continue
 
     def reset(self):
         """Intra-game reset: deck tracking resets, opponent model persists."""
@@ -188,28 +191,26 @@ class AcademicBeastBot(BotInterface):
         )
         w_nn, w_bayes = self.get_td_moe_weights()
 
-        # Tactical Archetype Counter: Calling Station catches everything -> NEVER bluff, play 100% honest cards
+        # 1. Invariant Game-Theoretic Dominance: Honest Multi-Card Packet Shedding (ADR-015)
+        # Playing maximal honest cards (k >= 2) carries 0 challenge risk, maximizes opponent absorption on wrong calls,
+        # and accelerates hand clearance 2-4x to defeat the turn 24 draw-lock.
+        multi_honest = [r for r, count in rank_counts.items() if count >= 2]
+        if multi_honest:
+            best_r = max(multi_honest, key=lambda r: (rank_counts[r], r.value))
+            cards_to_dump = [c for c in hand if c.rank == best_r][:min(4, rank_counts[best_r])]
+            return (cards_to_dump, best_r)
+
+        # 2. Tactical Archetype Counter: Calling Station catches everything -> NEVER bluff, play 100% honest single cards
         if top_arch == "Calling_Station" and arch_conf >= 0.40 and w_bayes >= 0.35:
-            multi_honest = [r for r, count in rank_counts.items() if count >= 2]
-            if multi_honest:
-                best_r = max(multi_honest, key=lambda r: (rank_counts[r], r.value))
-                cards_to_dump = [c for c in hand if c.rank == best_r][:min(4, rank_counts[best_r])]
-                return (cards_to_dump, best_r)
             available_ranks = sorted(rank_counts.keys(), key=lambda r: r.value, reverse=True)
             for r in available_ranks:
                 honest_cards = [c for c in hand if c.rank == r][:1]
                 return (honest_cards, r)
             return ([hand[0]], hand[0].rank)
 
-        # Passive Opponent Multi-Card Shedding (Honest Rock, passive baselines)
+        # 3. Passive Opponent Safe Multi-Card Shedding (Honest Rock, passive baselines)
         pool = self._remaining_pool(hand, game_state)
         if call_freq < 0.35 or opp_bluff_rate < 0.15 or (top_arch == "Honest_Rock" and arch_conf >= 0.40):
-            multi_honest = [r for r, count in rank_counts.items() if count >= 2]
-            if multi_honest:
-                best_r = max(multi_honest, key=lambda r: (rank_counts[r], r.value))
-                cards_to_dump = [c for c in hand if c.rank == best_r][:min(4, rank_counts[best_r])]
-                return (cards_to_dump, best_r)
-
             if call_freq < 0.35 or (pile_size <= 2 and call_freq < 0.50):
                 safe_3 = [r for r, count in pool.items() if count >= 3]
                 if len(hand) >= 3 and safe_3:

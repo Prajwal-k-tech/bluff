@@ -138,5 +138,125 @@
     "final_val_loss": 13.140094502766926,
     "final_val_acc": 0.16666666666666666,
     "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:12:33",
+    "samples_ingested": 64,
+    "total_buffer_size": 1685,
+    "pre_loss": 24.497535705566406,
+    "pre_acc": 0.1984126984126984,
+    "final_val_loss": 16.04187538510277,
+    "final_val_acc": 0.19444444444444445,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:13:30",
+    "samples_ingested": 64,
+    "total_buffer_size": 1764,
+    "pre_loss": 20.27501503987746,
+    "pre_acc": 0.24242424242424243,
+    "final_val_loss": 12.94093720479445,
+    "final_val_acc": 0.24242424242424243,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:15:05",
+    "samples_ingested": 64,
+    "total_buffer_size": 1843,
+    "pre_loss": 19.22234728716422,
+    "pre_acc": 0.1956521739130435,
+    "final_val_loss": 11.907805629398512,
+    "final_val_acc": 0.18115942028985507,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:20:05",
+    "samples_ingested": 64,
+    "total_buffer_size": 1922,
+    "pre_loss": 18.99495177798801,
+    "pre_acc": 0.20833333333333334,
+    "final_val_loss": 10.923931174808079,
+    "final_val_acc": 0.22569444444444445,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:20:50",
+    "samples_ingested": 64,
+    "total_buffer_size": 2001,
+    "pre_loss": 22.970132166544598,
+    "pre_acc": 0.20333333333333334,
+    "final_val_loss": 13.777659123738607,
+    "final_val_acc": 0.19333333333333333,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:22:33",
+    "samples_ingested": 64,
+    "total_buffer_size": 2080,
+    "pre_loss": 20.81661605834961,
+    "pre_acc": 0.16346153846153846,
+    "final_val_loss": 11.989926558274488,
+    "final_val_acc": 0.1794871794871795,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 13:24:41",
+    "samples_ingested": 64,
+    "total_buffer_size": 2159,
+    "pre_loss": 22.08934858339859,
+    "pre_acc": 0.18885448916408668,
+    "final_val_loss": 12.912595521554858,
+    "final_val_acc": 0.19504643962848298,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:12:52",
+    "samples_ingested": 64,
+    "total_buffer_size": 2238,
+    "pre_loss": 21.825690978320676,
+    "pre_acc": 0.19701492537313434,
+    "final_val_loss": 12.458844614740627,
+    "final_val_acc": 0.2,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:13:23",
+    "samples_ingested": 64,
+    "total_buffer_size": 2317,
+    "pre_loss": 17.428867158697386,
+    "pre_acc": 0.21902017291066284,
+    "final_val_loss": 9.268702119502967,
+    "final_val_acc": 0.207492795389049,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:14:42",
+    "samples_ingested": 64,
+    "total_buffer_size": 2396,
+    "pre_loss": 18.941269303430754,
+    "pre_acc": 0.1894150417827298,
+    "final_val_loss": 9.983676397700828,
+    "final_val_acc": 0.17548746518105848,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:15:16",
+    "samples_ingested": 64,
+    "total_buffer_size": 2475,
+    "pre_loss": 22.74708524739967,
+    "pre_acc": 0.18059299191374664,
+    "final_val_loss": 12.897363904351494,
+    "final_val_acc": 0.19137466307277629,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
+  },
+  {
+    "timestamp": "2026-09-11 18:15:33",
+    "samples_ingested": 64,
+    "total_buffer_size": 2554,
+    "pre_loss": 21.62940209590424,
+    "pre_acc": 0.20365535248041775,
+    "final_val_loss": 11.032849966701578,
+    "final_val_acc": 0.1801566579634465,
+    "checkpoint_promoted": "nn/checkpoints/human_adapted.pt"
   }
 ]

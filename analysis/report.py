@@ -34,6 +34,8 @@ import sys
 from collections import defaultdict
 from typing import Dict, List, Optional
 
+from analysis.metrics import compute_deception_elo
+
 HAND_BUCKETS = [(1, 2), (3, 4), (5, 7), (8, 10), (11, 14), (15, 40)]
 
 
@@ -118,6 +120,7 @@ class Report:
         self.matchups: Dict[tuple, Dict[str, int]] = defaultdict(
             lambda: {"a": 0, "b": 0, "draw": 0})
         self._game_seen_lock: Dict[str, set] = defaultdict(set)
+        self.ratings: Dict[str, float] = {}
 
     def feed(self, path: str) -> int:
         """Consume one JSONL file. Returns number of records read."""
@@ -158,6 +161,7 @@ class Report:
             b = rec.get("bot_mode_b") or "?"
             key = tuple(sorted((a, b)))
             winner = rec.get("winner_player")
+            winner_name = None
             if winner is None or winner == -1:
                 self.matchups[key]["draw"] += 1
             else:
@@ -167,6 +171,13 @@ class Report:
                     self.matchups[key]["a"] += 1
                 else:
                     self.matchups[key]["b"] += 1
+
+            if a != "?" and b != "?":
+                s_a = self.bots[a].s_lock if self.bots[a].lock_hands else 14.0
+                s_b = self.bots[b].s_lock if self.bots[b].lock_hands else 14.0
+                new_ra, new_rb = compute_deception_elo(self.ratings, winner_name, a, b, s_a, s_b)
+                self.ratings[a] = new_ra
+                self.ratings[b] = new_rb
 
     # -- output ---------------------------------------------------------------
 
@@ -232,6 +243,22 @@ class Report:
                     m = self.matchups[(a, b)]
                     out.write(f"  {a} vs {b}: {m['a']}-{m['b']}"
                               f"-{m['draw']}\n")
+
+        if self.ratings:
+            if markdown:
+                out.write("\n### Deception Elo Leaderboard\n\n")
+                out.write("| Rank | Bot | Deception Elo |\n")
+                out.write("|---|---|---|\n")
+                sorted_ratings = sorted(self.ratings.items(), key=lambda kv: kv[1], reverse=True)
+                for rank, (bot, r) in enumerate(sorted_ratings, 1):
+                    out.write(f"| {rank} | {bot} | {r:.1f} |\n")
+            else:
+                out.write("\nDECEPTION ELO LEADERBOARD\n")
+                out.write(f"  {'Rank':<6} {'Bot':<18} {'Elo':>8}\n")
+                out.write("  " + "-" * 34 + "\n")
+                sorted_ratings = sorted(self.ratings.items(), key=lambda kv: kv[1], reverse=True)
+                for rank, (bot, r) in enumerate(sorted_ratings, 1):
+                    out.write(f"  {rank:<6} {bot:<18} {r:>8.1f}\n")
         out.write("\n")
 
 

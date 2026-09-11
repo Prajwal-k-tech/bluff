@@ -608,32 +608,76 @@ To establish the ultimate benchmark across all 20 parameterized synthetic person
 
 | # | Opponent Persona | Hidden $p_{\text{bluff}}$ | Hidden $p_{\text{call}}$ | Record (W - L - D) | Win Rate [95% CI] | Loss Rate | Bluff MAE |
 |:---:|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| 1 | `Honest_Rock` | 0.00 | 0.15 | 77W - 1L - 122D | 38.5% [32.0%, 45.4%] | 0.5% | 0.080 |
-| 2 | `Conservative_Nit` | 0.05 | 0.25 | 45W - 0L - 155D | 22.5% [17.3%, 28.8%] | **0.0%** | 0.040 |
-| 3 | `Passive_Honest` | 0.04 | 0.10 | **198W - 0L - 2D** | **99.0%** [96.4%, 99.7%] | **0.0%** | 0.128 |
-| 4 | `Suspicious_Honest` | 0.02 | 0.55 | 2W - 0L - 198D | 1.0% [0.3%, 3.6%] | **0.0%** | 0.012 |
-| 5 | `Balanced_Standard` | 0.20 | 0.45 | 24W - 0L - 176D | 12.0% [8.2%, 17.2%] | **0.0%** | 0.071 |
-| 6 | `Equilibrium_Seeker` | 0.22 | 0.48 | 24W - 0L - 176D | 12.0% [8.2%, 17.2%] | **0.0%** | 0.089 |
-| 7 | `Adaptive_Sim` | 0.25 | 0.35 | 62W - 0L - 138D | 31.0% [25.0%, 37.7%] | **0.0%** | 0.093 |
-| 8 | `Tactical_Mid` | 0.20 | 0.50 | 35W - 0L - 165D | 17.5% [12.9%, 23.4%] | **0.0%** | 0.093 |
-| 9 | `Aggressive_Bluffer` | 0.45 | 0.40 | 140W - 1L - 59D | **70.0%** [63.3%, 75.9%] | 0.5% | 0.180 |
-| 10 | `Hyper_Maniac` | 0.65 | 0.60 | **187W - 0L - 13D** | **93.5%** [89.2%, 96.2%] | **0.0%** | 0.313 |
-| 11 | `MultiCard_Bomber` | 0.50 | 0.45 | 135W - 2L - 63D | **67.5%** [60.7%, 73.6%] | 1.0% | 0.215 |
-| 12 | `Stealth_Bluffer` | 0.35 | 0.30 | 121W - 0L - 79D | **60.5%** [53.6%, 67.0%] | **0.0%** | 0.181 |
-| 13 | `Calling_Station` | 0.12 | 0.85 | 6W - 0L - 194D | 3.0% [1.4%, 6.4%] | **0.0%** | 0.073 |
-| 14 | `Hyper_Sheriff` | 0.08 | 0.90 | 0W - 0L - 200D | 0.0% [0.0%, 1.9%] | **0.0%** | 0.049 |
-| 15 | `Relentless_Hunter` | 0.30 | 0.80 | 35W - 0L - 165D | 17.5% [12.9%, 23.4%] | **0.0%** | 0.188 |
-| 16 | `Curious_Station` | 0.20 | 0.75 | **198W - 0L - 2D** | **99.0%** [96.4%, 99.7%] | **0.0%** | 0.085 |
-| 17 | `Pure_Random_Chaotic` | 0.50 | 0.50 | 148W - 0L - 52D | **74.0%** [67.5%, 79.6%] | **0.0%** | 0.225 |
-| 18 | `Total_Maniac_Extreme` | 0.75 | 0.75 | **199W - 0L - 1D** | **99.5%** [97.2%, 99.9%] | **0.0%** | 0.374 |
-| 19 | `Never_Caller` | 0.30 | 0.05 | 145W - 9L - 46D | **72.5%** [65.9%, 78.2%] | 4.5% | 0.105 |
+| 1 | `Honest_Rock` | 0.00 | 0.15 | 71W - 1L - 128D | 35.5% [29.2%, 42.3%] | 0.5% | 0.073 |
+| 2 | `Conservative_Nit` | 0.05 | 0.25 | 46W - 0L - 154D | 23.0% [17.7%, 29.3%] | **0.0%** | 0.039 |
+| 3 | `Passive_Honest` | 0.04 | 0.10 | **199W - 0L - 1D** | **99.5%** [97.2%, 99.9%] | **0.0%** | 0.130 |
+| 4 | `Suspicious_Honest` | 0.02 | 0.55 | 3W - 0L - 197D | 1.5% [0.5%, 4.3%] | **0.0%** | 0.011 |
+| 5 | `Balanced_Standard` | 0.20 | 0.45 | 32W - 0L - 168D | 16.0% [11.6%, 21.7%] | **0.0%** | 0.077 |
+| 6 | `Equilibrium_Seeker` | 0.22 | 0.48 | 47W - 0L - 153D | 23.5% [18.2%, 29.8%] | **0.0%** | 0.102 |
+| 7 | `Adaptive_Sim` | 0.25 | 0.35 | 91W - 0L - 109D | 45.5% [38.7%, 52.4%] | **0.0%** | 0.106 |
+| 8 | `Tactical_Mid` | 0.20 | 0.50 | 49W - 0L - 151D | 24.5% [19.1%, 30.9%] | **0.0%** | 0.098 |
+| 9 | `Aggressive_Bluffer` | 0.45 | 0.40 | **165W - 1L - 34D** | **82.5%** [76.6%, 87.1%] | 0.5% | 0.222 |
+| 10 | `Hyper_Maniac` | 0.65 | 0.60 | **200W - 0L - 0D** | **100.0%** [98.1%, 100.0%] | **0.0%** | 0.398 |
+| 11 | `MultiCard_Bomber` | 0.50 | 0.45 | **180W - 2L - 18D** | **90.0%** [85.1%, 93.4%] | 1.0% | 0.244 |
+| 12 | `Stealth_Bluffer` | 0.35 | 0.30 | **180W - 0L - 20D** | **90.0%** [85.1%, 93.4%] | **0.0%** | 0.201 |
+| 13 | `Calling_Station` | 0.12 | 0.85 | 9W - 0L - 191D | 4.5% [2.4%, 8.3%] | **0.0%** | 0.078 |
+| 14 | `Hyper_Sheriff` | 0.08 | 0.90 | 0W - 0L - 200D | 0.0% [0.0%, 1.9%] | **0.0%** | 0.054 |
+| 15 | `Relentless_Hunter` | 0.30 | 0.80 | 54W - 0L - 146D | 27.0% [21.3%, 33.5%] | **0.0%** | 0.198 |
+| 16 | `Curious_Station` | 0.20 | 0.75 | **200W - 0L - 0D** | **100.0%** [98.1%, 100.0%] | **0.0%** | 0.109 |
+| 17 | `Pure_Random_Chaotic` | 0.50 | 0.50 | **184W - 0L - 16D** | **92.0%** [87.4%, 95.0%] | **0.0%** | 0.271 |
+| 18 | `Total_Maniac_Extreme` | 0.75 | 0.75 | **200W - 0L - 0D** | **100.0%** [98.1%, 100.0%] | **0.0%** | 0.508 |
+| 19 | `Never_Caller` | 0.30 | 0.05 | 169W - 9L - 22D | **84.5%** [78.8%, 88.9%] | 4.5% | 0.106 |
 | 20 | `Always_Caller_Rock` | 0.02 | 0.95 | 0W - 0L - 200D | 0.0% [0.0%, 1.9%] | **0.0%** | 0.008 |
-| — | **TOURNAMENT TOTAL** | — | — | **1,781W - 13L - 2,206D** | **44.52%** | **0.33%** | **0.129** |
+| — | **TOURNAMENT TOTAL** | — | — | **2,079W - 13L - 1,908D** | **51.98%** | **0.33%** | **0.134** |
 
 **Key High-Water Mark Findings:**
-1. **Unassailable Non-Loss Defense:** Across 4,000 games, total losses were limited to 13 (**0.33% loss rate**, 99.67% non-loss rate). Across 16 of the 20 personas, Academic Beast suffered **0 losses**.
-2. **Maniac Demolition:** Crushed high-frequency bluffers: Total_Maniac (99.5% WR), Hyper_Maniac (93.5% WR), Aggressive_Bluffer (70.0% WR), and MultiCard_Bomber (67.5% WR).
-3. **Passive Exploitation:** Exploited passive callers: Curious_Station (99.0% WR), Passive_Honest (99.0% WR), and Never_Caller (72.5% WR).
+1. **Historic 51.98% Win Rate:** Across 4,000 games, Academic Beast scored **2,079 wins** (+2,066 Net Score), crossing the 50% threshold against the complete heterogeneous 20-persona population.
+2. **Unassailable Non-Loss Defense:** Across 4,000 games, total losses were limited to 13 (**0.33% loss rate**, 99.67% non-loss rate). Across 16 of the 20 personas, Academic Beast suffered **0 losses**.
+3. **Maniac Demolition & 100% Sweeps:** Clean 200-0 sweeps against Total_Maniac, Hyper_Maniac, and Curious_Station, with 90%+ win rates against MultiCard_Bomber, Stealth_Bluffer, and Pure_Random.
+4. **Passive Exploitation:** Exploited passive callers: Passive_Honest (99.5% WR, 199W) and Never_Caller (84.5% WR, 169W).
+
+---
+
+## Section 14: BluffNet-XL vs. No-NN Factorial Ablation Study across 20 Personas (4,000 Games, ADR-015)
+
+To formally answer whether neural representation adds value over pure Bayesian-combinatorial opponent modeling, we conducted a 4,000-game head-to-head factorial ablation across all 20 synthetic personas (`experiments/ablate_nn_in_academic_beast.py`, $N=100$ games/matchup × 2 conditions, paired seeds, 50/50 seat alternation, master seed 20260911):
+
+| Architecture Condition | Total Games | Wins | Losses | Draws | Win Rate | Loss Rate | Net Score | Wilson 95% CI |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **No-NN (Pure Bayesian/Combinatorial)** | 2,000 | **1,061** | **5** | 934 | **53.05%** | **0.25%** | **+1,056** | [50.8%, 55.2%] |
+| **BluffNet-XL (Full Residual Network)** | 2,000 | 984 | **5** | 1,011 | 49.20% | **0.25%** | +979 | [47.0%, 51.4%] |
+| **Ablation Delta ($\Delta = \text{No-NN} - \text{XL}$)** | — | **+77** | **0** | -77 | **+3.85%** | **0.00%** | **+77** | $p = 0.015$ |
+
+### Head-to-Head Persona Comparison
+
+| # | Opponent Persona | BluffNet-XL WR | No-NN WR | Delta Win Rate ($\Delta_{\text{WR}}$) | Losses (XL / No) | Dominant Mechanism |
+|:---:|:---|:---:|:---:|:---:|:---:|:---|
+| 1 | `Honest_Rock` | 37.0% | **40.0%** | +3.0% | 1 / 1 | Parity (Safe packet shedding) |
+| 2 | `Conservative_Nit` | 28.0% | **30.0%** | +2.0% | 0 / 0 | Near parity |
+| 3 | `Passive_Honest` | 99.0% | **100.0%** | +1.0% | 0 / 0 | Pure zero-loss sweep |
+| 4 | `Suspicious_Honest` | **3.0%** | 1.0% | -2.0% | 0 / 0 | XL breaks draw lock via subtle bluffs |
+| 5 | `Balanced_Standard` | 10.0% | **17.0%** | +7.0% | 0 / 0 | Robust defense |
+| 6 | `Equilibrium_Seeker` | 16.0% | **25.0%** | +9.0% | 0 / 0 | Multi-card honest exploitation |
+| 7 | `Adaptive_Sim` | 36.0% | **44.0%** | +8.0% | 0 / 0 | Faster card shedding |
+| 8 | `Tactical_Mid` | 16.0% | **19.0%** | +3.0% | 0 / 0 | Consistent shedding velocity |
+| 9 | `Aggressive_Bluffer` | 77.0% | **88.0%** | +11.0% | 0 / 0 | Packet dump traps bluff calls |
+| 10 | `Hyper_Maniac` | 99.0% | **100.0%** | +1.0% | 0 / 0 | Complete demolition |
+| 11 | `MultiCard_Bomber` | 86.0% | **96.0%** | +10.0% | 1 / 1 | Card-count catching + rapid dumping |
+| 12 | `Stealth_Bluffer` | 81.0% | **95.0%** | +14.0% | 0 / 0 | Rapid exploitation of uncalled packets |
+| 13 | `Calling_Station` | 3.0% | 3.0% | 0.0% | 0 / 0 | Parity (100% honest play) |
+| 14 | `Hyper_Sheriff` | 0.0% | 0.0% | 0.0% | 0 / 0 | Zero losses |
+| 15 | `Relentless_Hunter` | **24.0%** | 23.0% | -1.0% | 0 / 0 | XL slight edge on honest single rank choice |
+| 16 | `Curious_Station` | 100.0% | 100.0% | 0.0% | 0 / 0 | 100% win rate in both |
+| 17 | `Pure_Random_Chaotic` | 88.0% | **93.0%** | +5.0% | 0 / 0 | Punishing random calls |
+| 18 | `Total_Maniac_Extreme` | 99.0% | **100.0%** | +1.0% | 0 / 0 | Complete neutralization |
+| 19 | `Never_Caller` | 82.0% | **87.0%** | +5.0% | 3 / 3 | Rapid multi-card safe dumps |
+| 20 | `Always_Caller_Rock` | 0.0% | 0.0% | 0.0% | 0 / 0 | Safe honest play, 0 losses |
+| — | **AGGREGATE TOTAL** | **49.20%** | **53.05%** | **+3.85%** | **5 / 5** | **Both conditions achieve 99.75% non-loss rate** |
+
+### Theoretical Conclusions: The Honest Packet Dominance Principle
+1. **The Cardinality Law of Shedding Games:** In free-rank shedding games, when a player holds $k \ge 2$ honest cards of rank $r$, playing all $k$ honest cards strictly dominates playing 1 honest card. It carries zero challenge liability ($\mathbb{P}(\text{caller right}) = 0$), maximizes opponent penalty on incorrect challenges ($S_{\text{opp}} \leftarrow S_{\text{opp}} + S_{\text{pile}} + k$), and sheds hand inventory at $3\times$ to $4\times$ velocity.
+2. **Softmax Entropy Dilution:** Discrete neural policies trained with softmax action distributions distribute probability mass over single-card plays. Sampling via multinomial choice dilutes multi-card packet dumping, needlessly prolonging games into draw-pile exhaustion ($T_{\text{lock}} = 24$).
+3. **Decoupled Architecture Mandate:** Pure Bayesian-Combinatorial reasoning provides optimal deterministic card shedding and challenge thresholds. The neural network's optimal role is restricted to proposing subtle bluffs and breaking ties when multiple equal-card actions exist.
 
 ---
 

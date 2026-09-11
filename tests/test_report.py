@@ -42,3 +42,7 @@ def test_report_s_lock(tmp_path):
     assert n == 5
     assert report.bots["Hybrid"].s_lock == (12 + 10) / 2  # 11.0
     assert report.bots["Honest"].s_lock == 18.0
+    assert "Hybrid" in report.ratings
+    assert "Honest" in report.ratings
+    assert report.ratings["Hybrid"] > 1500.0
+    assert report.ratings["Honest"] < 1500.0

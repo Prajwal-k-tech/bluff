@@ -1,0 +1,314 @@
+"""
+BluffNet-XL Ultimate: Scaled Deep Residual Policy Training (100,000 Transitions).
+Directly satisfies user mandate:
+  "use bigger data sets, run more epochs make it the ultimate model"
+
+Features:
+- 100,000 diverse state-action-mask transitions harvested across all 20 synthetic personas.
+- Covers full 54-action discrete space (actions 0..51 plays, 52 CALL, 53 PASS).
+- Exact combinatorial pool tracking (pool_by_rank) and opponent signal tracking.
+- RTX 3050 GPU accelerated training with AdamW, Cosine Annealing, and Gradient Clipping.
+- Promotes ultimate checkpoint to nn/checkpoints/bluffnet_xl_ultimate.pt.
+"""
+
+import os
+import sys
+import time
+import argparse
+from typing import Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader, random_split
+
+sys.path.insert(0, os.path.abspath("."))
+
+from cards import Card, Rank
+from game import GameState, Action
+from bots.base import pending_claims_from_actions, pool_by_rank
+from nn.model import (
+    BluffNetXL,
+    ACTION_DIM,
+    CALL_ACTION,
+    PASS_ACTION,
+    action_index,
+    build_legal_actions,
+)
+from nn.state_encoder import StateEncoder, STATE_DIM
+from experiments.synthetic_population_eval import SYNTHETIC_POPULATION, PersonaBot
+
+
+def generate_league_data(
+    target_samples: int = 100000,
+    cache_path: str = "data/synthetic_league_100k.pt",
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if os.path.exists(cache_path):
+        print(f"[BluffNet-XL Ultimate] Loading cached dataset from {cache_path}...")
+        data = torch.load(cache_path, weights_only=True)
+        return data["states"], data["actions"], data["masks"]
+
+    print(f"[BluffNet-XL Ultimate] Harvesting {target_samples:,} diverse transitions across 20 synthetic personas...")
+    encoder = StateEncoder()
+    states = []
+    actions = []
+    masks = []
+
+    samples = 0
+    game_idx = 0
+    t0 = time.time()
+
+    while samples < target_samples:
+        game_idx += 1
+        persona = SYNTHETIC_POPULATION[game_idx % len(SYNTHETIC_POPULATION)]
+
+        game = GameState(num_players=2)
+        game.deal(14)
+
+        for turn in range(1, 100):
+            if game.game_over:
+                break
+            cp = game.current_player
+            opp = 1 - cp
+
+            active_hand = game.get_hand(cp).cards
+            opp_hand = game.get_hand(opp).cards
+
+            if not active_hand:
+                break
+
+            pending = pending_claims_from_actions(game.actions)
+            pool = pool_by_rank(active_hand, pending)
+
+            context = {
+                "opponent_hand_size": len(opp_hand),
+                "pile_size": game.get_pile_size(),
+                "draw_pile_size": len(game.draw_pile),
+                "turn_number": turn,
+                "can_pass": len(game.draw_pile) > 0,
+                "last_action": game.actions[-1] if game.actions else None,
+                "cards_remaining": pool,
+                "opponent_call_rate": persona.true_call_rate,
+                "opponent_bluff_revealed": persona.true_bluff_rate,
+                "my_bluff_rate": 0.20,
+                "my_bluff_success_rate": 0.60,
+            }
+
+            s_vec = encoder.encode(active_hand, context)
+            mask = build_legal_actions(active_hand, can_call=False, can_pass=False, respond_only=False)
+
+            p_cards, p_rank = persona.decide_play(active_hand, context)
+            if not p_cards:
+                continue
+
+            q = min(4, max(1, len(p_cards)))
+            a_idx = action_index(p_rank, q)
+
+            states.append(s_vec)
+            actions.append(a_idx)
+            masks.append(mask)
+            samples += 1
+
+            if samples >= target_samples:
+                break
+
+            success, _ = game.play_cards(cp, p_cards, p_rank)
+            if not success:
+                break
+
+            # Respond phase
+            resp_hand = game.get_hand(opp).cards
+            if not resp_hand:
+                break
+
+            can_pass = len(game.draw_pile) > 0
+            call = persona.decide_call(game.actions[-1], context)
+            if not can_pass:
+                call = True
+
+            resp_pool = pool_by_rank(resp_hand, pending_claims_from_actions(game.actions))
+            resp_context = {
+                "opponent_hand_size": len(active_hand),
+                "pile_size": game.get_pile_size(),
+                "draw_pile_size": len(game.draw_pile),
+                "turn_number": turn,
+                "can_pass": can_pass,
+                "last_action": game.actions[-1],
+                "cards_remaining": resp_pool,
+                "opponent_call_rate": persona.true_call_rate,
+                "opponent_bluff_revealed": persona.true_bluff_rate,
+                "my_bluff_rate": 0.20,
+                "my_bluff_success_rate": 0.60,
+            }
+
+            s_resp = encoder.encode(resp_hand, resp_context)
+            m_resp = build_legal_actions(resp_hand, can_call=True, can_pass=can_pass, respond_only=True)
+            a_resp = CALL_ACTION if call else PASS_ACTION
+
+            states.append(s_resp)
+            actions.append(a_resp)
+            masks.append(m_resp)
+            samples += 1
+
+            if samples >= target_samples:
+                break
+
+            if call:
+                game.call_bluff(opp)
+            else:
+                game.pass_turn(passer=opp)
+
+    dt = time.time() - t0
+    print(f"[BluffNet-XL Ultimate] Harvested {len(states):,} transitions across {game_idx} matches in {dt:.2f}s")
+    
+    states_t = torch.stack(states)
+    actions_t = torch.tensor(actions, dtype=torch.long)
+    masks_t = torch.stack(masks)
+
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    torch.save({"states": states_t, "actions": actions_t, "masks": masks_t}, cache_path)
+    print(f"[BluffNet-XL Ultimate] Cached dataset to {cache_path}")
+    return states_t, actions_t, masks_t
+
+
+def train_bluffnet_xl_ultimate(
+    samples: int = 100000,
+    epochs: int = 25,
+    batch_size: int = 256,
+    lr: float = 3e-4,
+    output_path: str = "nn/checkpoints/bluffnet_xl_ultimate.pt",
+):
+    states, actions, masks = generate_league_data(target_samples=samples)
+
+    dataset = TensorDataset(states, actions, masks)
+    val_size = int(0.15 * len(dataset))
+    train_size = len(dataset) - val_size
+    train_ds, val_ds = random_split(dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[BluffNet-XL Ultimate] Initializing architecture on {device}...")
+    if device.type == "cuda":
+        print(f"  GPU Device: {torch.cuda.get_device_name(0)}")
+
+    model = BluffNetXL(state_dim=39, action_dim=ACTION_DIM, hidden_dim=512).to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"[BluffNet-XL Ultimate] Architecture: 512-dim LayerNorm GELU Dual-Residual ({total_params:,} parameters)")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
+
+    best_val_loss = float("inf")
+    best_val_acc = 0.0
+    t_start = time.time()
+
+    print("\n" + "=" * 75)
+    print(f"ULTIMATE TRAINING LOOP: {epochs} Epochs on {len(train_ds):,} Training Samples (Batch Size {batch_size})")
+    print("=" * 75)
+
+    for ep in range(1, epochs + 1):
+        model.train()
+        total_loss = 0.0
+        correct = 0
+        total = 0
+        t_ep = time.time()
+
+        for s, a, m in train_loader:
+            s = s.to(device, dtype=torch.float32)
+            a = a.to(device, dtype=torch.long)
+            m = m.to(device, dtype=torch.bool)
+
+            optimizer.zero_grad()
+
+            logits, _ = model.forward(s)
+            masked_logits = logits.clone()
+            masked_logits[~m] = float("-inf")
+
+            log_probs = F.log_softmax(masked_logits, dim=-1)
+            loss = F.nll_loss(log_probs, a)
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+            total_loss += loss.item() * s.size(0)
+            preds = log_probs.argmax(dim=-1)
+            correct += (preds == a).sum().item()
+            total += s.size(0)
+
+        scheduler.step()
+        ep_time = time.time() - t_ep
+
+        # Validation
+        model.eval()
+        v_loss = 0.0
+        v_correct = 0
+        v_total = 0
+
+        with torch.no_grad():
+            for s, a, m in val_loader:
+                s = s.to(device, dtype=torch.float32)
+                a = a.to(device, dtype=torch.long)
+                m = m.to(device, dtype=torch.bool)
+
+                logits, _ = model.forward(s)
+                masked_logits = logits.clone()
+                masked_logits[~m] = float("-inf")
+                log_probs = F.log_softmax(masked_logits, dim=-1)
+                loss = F.nll_loss(log_probs, a)
+
+                v_loss += loss.item() * s.size(0)
+                preds = log_probs.argmax(dim=-1)
+                v_correct += (preds == a).sum().item()
+                v_total += s.size(0)
+
+        tr_acc = correct / total
+        val_acc = v_correct / v_total
+        val_l = v_loss / v_total
+        lr_now = scheduler.get_last_lr()[0]
+
+        print(f"  Epoch {ep:2d}/{epochs:2d} ({ep_time:4.1f}s) | LR: {lr_now:.2e} | Train Loss: {total_loss/total:.4f} (Acc: {tr_acc*100:5.1f}%) | Val Loss: {val_l:.4f} (Acc: {val_acc*100:5.1f}%)")
+
+        if val_l < best_val_loss:
+            best_val_loss = val_l
+            best_val_acc = val_acc
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            checkpoint_payload = {
+                "model_state_dict": model.state_dict(),
+                "architecture": "BluffNetXL",
+                "state_dim": 39,
+                "action_dim": ACTION_DIM,
+                "hidden_dim": 512,
+                "val_loss": best_val_loss,
+                "val_acc": best_val_acc,
+                "epochs_trained": ep,
+                "samples": samples,
+            }
+            torch.save(checkpoint_payload, output_path)
+            # Also update bluffnet_xl_league.pt
+            torch.save(checkpoint_payload, "nn/checkpoints/bluffnet_xl_league.pt")
+
+    total_time = time.time() - t_start
+    print("=" * 75)
+    print(f"[BluffNet-XL Ultimate] Training Complete in {total_time:.1f}s!")
+    print(f"Best Val Loss: {best_val_loss:.4f} | Best Val Accuracy: {best_val_acc*100:.2f}%")
+    print(f"Model saved to {output_path} and synced to nn/checkpoints/bluffnet_xl_league.pt")
+    return output_path, best_val_acc, best_val_loss
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--samples", type=int, default=100000)
+    parser.add_argument("--epochs", type=int, default=25)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    args = parser.parse_args()
+
+    train_bluffnet_xl_ultimate(
+        samples=args.samples,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+    )

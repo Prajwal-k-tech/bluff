@@ -115,6 +115,10 @@ class HybridBot(BotInterface):
         self.opp_honest: int = 0
         self.opp_calls: int = 0
         self.opp_passes: int = 0
+        self.bluff_tracker = BluffTracker()
+        self.bluff_threshold = 0.55
+        self.call_threshold = 0.50
+
     def reset(self):
         self.counter = CardCounter()
         self.opp_bluffs = 0

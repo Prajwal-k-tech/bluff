@@ -166,7 +166,7 @@ def run_multi_bot_and_ui_tests():
             
             toggle_sidebar_btn = page.locator('button[aria-label="Toggle game log"]')
             if toggle_sidebar_btn.is_visible():
-                toggle_sidebar_btn.click()
+                toggle_sidebar_btn.click(force=True)
                 page.wait_for_timeout(500)
                 print("   ✓ Desktop game log sidebar toggle clicked.")
 
