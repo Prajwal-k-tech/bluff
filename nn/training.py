@@ -440,7 +440,7 @@ def compute_gae(transitions: List[Transition], gamma: float, lam: float):
     return advantages, returns
 
 
-def ppo_update(net: BluffNet, optimizer: torch.optim.Optimizer,
+def ppo_update(net: "BluffNet | BluffNetXL", optimizer: torch.optim.Optimizer,
                transitions: List[Transition], clip_eps: float = 0.2,
                epochs: int = 4, batch_size: int = 256, gamma: float = 0.99,
                lam: float = 0.95, ent_coef: float = 0.02, vf_coef: float = 0.5,
