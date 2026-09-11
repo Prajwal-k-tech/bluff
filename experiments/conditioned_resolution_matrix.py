@@ -85,14 +85,16 @@ def run(persona_name: str, condition: str, n_games: int, seed: int) -> dict:
             "s_lock": s_sum / n_games}
 
 
-def main(smoke: bool = False):
+def main(smoke: bool = False, fixed_seed: bool = False):
     n = 2 if smoke else 100
     out = []
-    print(f"Conditioned resolution matrix — N={n}/matchup × 4 personas × 3 conditions", flush=True)
+    print(f"Conditioned resolution matrix — N={n}/matchup × 4 personas × 3 conditions"
+          + (" — FIXED SEED (same seed across conditions: isolates policy from seed noise)"
+             if fixed_seed else ""), flush=True)
     for persona in PERSONA_NAMES:
         row = {}
         for condition, make in CONDITIONS.items():
-            seed = 20260912 + hash((persona, condition)) % 1000  # fresh per cell, deterministic
+            seed = 20260913 if fixed_seed else 20260912 + hash((persona, condition)) % 1000
             r = run(persona, condition, n, seed)
             row[condition] = r
             print(f"  {persona:>22} | {condition:>15} | {r['w']:>3}W-{r['l']:<3}-{r['d']:<3} "
@@ -116,5 +118,7 @@ def main(smoke: bool = False):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--fixed-seed", action="store_true",
+                    help="same seed across conditions: isolates policy from seed noise")
     args = ap.parse_args()
-    main(smoke=args.smoke)
+    main(smoke=args.smoke, fixed_seed=args.fixed_seed)
