@@ -35,6 +35,7 @@ from bots.cardcount_bot import CardCountBot
 from bots.bayesian_bot import BayesianBot
 from bots.pure_nn_bot import PureNNBot
 from bots.hybrid_bot import HybridBot
+from bots.academic_beast_bot import AcademicBeastBot
 from db import pg as db
 
 # Opponent-model persistence helpers (imported here to avoid polluting the
@@ -72,6 +73,7 @@ BOT_CLASSES = {
     "bayesian": BayesianBot,
     "purenn": PureNNBot,
     "hybrid": HybridBot,
+    "beast": AcademicBeastBot,
 }
 
 
@@ -124,9 +126,9 @@ class GameRoom:
                 self.bot_name, player_id=self.session_user_id)
         except Exception:  # noqa: BLE001 — db layer already swallows; belt first
             self.db_session_id = None
-        # Load persisted opponent model (best-effort, BayesianBot and HybridBot)
+        # Load persisted opponent model (best-effort: BayesianBot, HybridBot, AcademicBeastBot)
         if (self.session_user_id and _OpponentModel is not None
-                and isinstance(self.bot, (BayesianBot, HybridBot))):
+                and isinstance(self.bot, (BayesianBot, HybridBot, AcademicBeastBot))):
             try:
                 saved = await db.load_opponent_model(
                     self.session_user_id, self.bot_name)
@@ -222,7 +224,7 @@ class GameRoom:
             "message": message,
         }
 
-        # Real-time adaptation metrics from OpponentModel (BayesianBot & HybridBot)
+        # Real-time adaptation metrics from OpponentModel (BayesianBot, HybridBot, AcademicBeastBot)
         bot_adaptation = None
         if hasattr(self.bot, "model") and hasattr(self.bot.model, "overall_bluff"):
             bot_adaptation = {
@@ -231,6 +233,12 @@ class GameRoom:
                 "actions_observed": self.bot.model.total_actions_observed,
                 "model_loaded": getattr(self, "model_loaded", False),
             }
+            if hasattr(self.bot, "classifier") and hasattr(self.bot, "opp_bluffs"):
+                top_arch, conf = self.bot.classifier.top_archetype(
+                    self.bot.opp_bluffs, self.bot.opp_honest, self.bot.opp_calls, self.bot.opp_passes
+                )
+                bot_adaptation["inferred_archetype"] = top_arch.replace("_", " ")
+                bot_adaptation["archetype_confidence"] = round(conf, 3)
         payload["bot_adaptation"] = bot_adaptation
 
         await self.ws.send_json(payload)
@@ -246,15 +254,15 @@ class GameRoom:
             human_won = winner == self.human_id
             message = "You win!" if human_won else "Bot wins!"
             result = "win" if human_won else "loss"
-        # Persist opponent model before closing (best-effort, BayesianBot and HybridBot)
+        # Persist opponent model before closing (best-effort: BayesianBot, HybridBot, AcademicBeastBot)
         if (self.session_user_id
-                and isinstance(self.bot, (BayesianBot, HybridBot))):
+                and isinstance(self.bot, (BayesianBot, HybridBot, AcademicBeastBot))):
             try:
                 model_data = {
                     "model": self.bot.model.to_dict(),
                     "bluff_tracker": self.bot.bluff_tracker.to_dict(),
-                    "bluff_threshold": self.bot.bluff_threshold,
-                    "call_threshold": self.bot.call_threshold,
+                    "bluff_threshold": getattr(self.bot, "bluff_threshold", 0.30),
+                    "call_threshold": getattr(self.bot, "call_threshold", 0.60),
                 }
                 await db.save_opponent_model(
                     self.session_user_id, self.bot_name, model_data)
@@ -314,7 +322,7 @@ class GameRoom:
         # Update card counter with bot's own play (learn card distribution).
         # NOTE: we do NOT call observe_action here because that would feed
         # the bot's own play into the *opponent* model, corrupting it.
-        if isinstance(self.bot, (BayesianBot, HybridBot)):
+        if isinstance(self.bot, (BayesianBot, HybridBot, AcademicBeastBot)):
             self.bot.counter.update_with_play(cards)
 
         await db.log_action(

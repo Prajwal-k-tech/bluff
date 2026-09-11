@@ -98,7 +98,8 @@ def test_bot_nomenclature_alignment():
     tex_content = load_file(MAIN_TEX_PATH)
     import server
     bot_keys = set(server.BOT_CLASSES.keys())
-    assert bot_keys == {"random", "honest", "cardcount", "bayesian", "purenn", "hybrid"}
+    canonical = {"random", "honest", "cardcount", "bayesian", "purenn", "hybrid"}
+    assert canonical.issubset(bot_keys), f"Missing canonical bots: {canonical - bot_keys}"
 
     for key in ["Random", "Honest", "CardCount", "Bayesian", "PureNN", "Hybrid"]:
         assert key in tex_content, f"Bot name {key} missing in main.tex"

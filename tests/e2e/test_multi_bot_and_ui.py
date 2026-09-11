@@ -29,6 +29,7 @@ BOT_TIERS = [
     ("Hard", "bayesian"),
     ("Expert", "purenn"),
     ("Master", "hybrid"),
+    ("Grandmaster", "beast"),
 ]
 
 def is_server_running(url: str) -> bool:

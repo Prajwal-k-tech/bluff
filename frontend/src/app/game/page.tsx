@@ -171,6 +171,14 @@ const BOT_OPTIONS = [
     description: "NN + Bayesian adaptation — supreme",
     dotColor: "bg-ctp-sapphire",
   },
+  {
+    id: "beast",
+    name: "Grandmaster",
+    bot: "AcademicBeast",
+    difficulty: 7,
+    description: "TD-MoE + Archetype Classifier + Dewey EV — ultimate",
+    dotColor: "bg-ctp-lavender",
+  },
 ] as const;
 
 function BotSelector({
@@ -278,6 +286,8 @@ interface BotAdaptation {
   estimated_call_frequency: number;
   actions_observed: number;
   model_loaded: boolean;
+  inferred_archetype?: string;
+  archetype_confidence?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -874,6 +884,14 @@ function GameOverOverlay({
                 </span>
               </div>
             </div>
+            {adaptation.inferred_archetype && (
+              <div className="mt-2 pt-1.5 border-t border-ctp-surface2/30 flex items-center justify-between text-[11px]">
+                <span className="text-ctp-overlay0">Inferred Archetype</span>
+                <span className="font-semibold text-ctp-lavender">
+                  {adaptation.inferred_archetype} ({((adaptation.archetype_confidence || 0) * 100).toFixed(0)}%)
+                </span>
+              </div>
+            )}
             <p className="mt-1.5 text-[10px] text-ctp-overlay1">
               Built from {adaptation.actions_observed} observed action{adaptation.actions_observed !== 1 ? "s" : ""}
               {adaptation.model_loaded ? " · Saved to S3 memory" : ""}
@@ -1055,6 +1073,14 @@ function GameLogSidebar({
                         </span>
                       </div>
                     </div>
+                    {adaptation.inferred_archetype && (
+                      <div className="mt-1.5 pt-1.5 border-t border-ctp-surface2/30 flex items-center justify-between text-[10px]">
+                        <span className="text-ctp-overlay0">Archetype:</span>
+                        <span className="font-medium text-ctp-lavender">
+                          {adaptation.inferred_archetype} ({((adaptation.archetype_confidence || 0) * 100).toFixed(0)}%)
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-1.5 text-[10px] text-ctp-overlay1">
                       Learned from {adaptation.actions_observed} action{adaptation.actions_observed !== 1 ? "s" : ""}
                     </div>
