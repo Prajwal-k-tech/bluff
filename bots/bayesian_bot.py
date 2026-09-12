@@ -15,7 +15,7 @@ import random
 from typing import List, Tuple, Dict, Optional
 from cards import Card, Rank
 from game import Action
-from bots.base import BotInterface
+from bots.base import BotInterface, bluff_probability as pool_bluff_prob
 from bots.prob import Hypergeometric
 
 
@@ -399,7 +399,7 @@ class BayesianBot(BotInterface):
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
         self.bluff_threshold = 0.55
-        self.call_threshold = 0.50
+        self.call_threshold = 0.55
         self.player_id: Optional[int] = None
 
     def reset(self):
@@ -518,11 +518,15 @@ class BayesianBot(BotInterface):
         claimed_rank = last_action.claimed_rank
         claim_size = len(last_action.cards_played)
 
-        # Card counting: P(bluff | game state)
-        our_copies = sum(1 for c in game_state.get("hand", [])
-                         if c.rank == claimed_rank)
-        p_bluff_counting = self.counter.bluff_probability(
-            claimed_rank, claim_size, hand_size, opp_hand_size, our_copies
+        # Card counting: P(bluff | pool model)
+        # Uses the shared pool model from base.py which self-heals via
+        # pending_claims — unlike the internal CardCounter whose monotone
+        # remaining_by_rank permanently loses track after pile recycling.
+        p_bluff_counting = pool_bluff_prob(
+            game_state.get("hand", []),
+            game_state.get("pending_claims", {}),
+            last_action,
+            opp_hand_size,
         )
 
         # Opponent model: P(bluff | opponent behavior)
@@ -531,7 +535,7 @@ class BayesianBot(BotInterface):
         )
 
         # Adaptive weighting: trust model more as we get more data
-        model_weight = min(1.0, self.model.total_actions_observed / 40)
+        model_weight = min(1.0, self.model.total_actions_observed / 15)
         counting_weight = 1.0 - model_weight
 
         p_bluff = (p_bluff_counting * counting_weight +
@@ -545,22 +549,28 @@ class BayesianBot(BotInterface):
         if hand_size <= 3:
             hand_bonus = 0.2
 
-        threshold = self.call_threshold - pile_bonus - hand_bonus
+        threshold = max(0.50, self.call_threshold - pile_bonus - hand_bonus)
 
         return p_bluff > threshold
 
     def observe_action(self, action: Action, opponent_hand_size: int):
-        # Update opponent model
-        self.model.observe_action(action, opponent_hand_size)
+        is_own = (self.player_id is not None and action.player == self.player_id)
 
-        # Update card counter with revealed cards
-        if action.bluff_called:
-            self.counter.update_with_play(action.cards_played)
-        elif not action.was_bluff:
+        # Update opponent model ONLY with opponent's actions.
+        # Feeding own plays into the model contaminates overall_bluff
+        # with self-bluff data, preventing convergence to 0% vs honest bots.
+        if not is_own:
+            self.model.observe_action(action, opponent_hand_size)
+
+        # Update card counter with all KNOWN cards:
+        # - Called actions: cards are revealed regardless of who played
+        # - Own plays: we know what we played (even bluffs)
+        # - Honest plays: cards match the claimed rank
+        if action.bluff_called or is_own or not action.was_bluff:
             self.counter.update_with_play(action.cards_played)
 
         # Track our own bluff outcomes
-        if self.player_id is not None and action.player == self.player_id and action.was_bluff:
+        if is_own and action.was_bluff:
             self.bluff_tracker.record_bluff(action.bluff_called)
 
     def save(self, path: str):
