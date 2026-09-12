@@ -65,6 +65,7 @@ class AcademicBeastBot(BotInterface):
         self.opp_honest: int = 0
         self.opp_calls: int = 0
         self.opp_passes: int = 0
+        self._vol_calls: int = 0  # T7f evidence budget: voluntary calls this game
 
         # Load BluffNet or BluffNetXL if available for state evaluation
         self.net: Optional[object] = None
@@ -97,6 +98,7 @@ class AcademicBeastBot(BotInterface):
     def reset(self):
         """Intra-game reset: deck tracking resets, opponent model persists."""
         self.counter = CardCounter()
+        self._vol_calls = 0
 
     def observe_action(self, action: Action, opponent_hand_size: int):
         self.model.observe_action(action, opponent_hand_size)
@@ -212,7 +214,7 @@ class AcademicBeastBot(BotInterface):
         # rule; self-corrects on first revealed bluff), shed +1/turn with a
         # 1-card maximum-plausibility bluff no pool caller contests. Sits
         # after honest multi-dumps (zero-risk sheds keep priority).
-        if self.opp_bluffs == 0 and self.opp_honest >= 6 and len(hand) >= 1:
+        if self.opp_bluffs == 0 and self._vol_calls >= 5 and len(hand) >= 1:
             pool_nb = self._remaining_pool(hand, game_state)
             best_claim = max(pool_nb.items(), key=lambda kv: (kv[1], kv[0].value))[0]
             bluff_card = next((c for c in hand if c.rank != best_claim), hand[0])
@@ -365,6 +367,7 @@ class AcademicBeastBot(BotInterface):
         # If opponent emptied hand (opp_hand_size == 0), passing guarantees 100% loss.
         # Calling strictly dominates passing for any non-zero bluff probability.
         if opp_hand_size == 0:
+            self._vol_calls += 1
             return True
 
         # T7c (Tess 2026-09-12): Honest-Rock unconditional pass. Spy-proven
@@ -388,12 +391,23 @@ class AcademicBeastBot(BotInterface):
         # = sustained never-bluff signature. Self-correcting: one revealed
         # bluff lifts the rule automatically. Vs such an opponent every call
         # is -EV (cost = pile, gain = 0).
-        if self.opp_bluffs == 0 and self.opp_honest >= 6:
+        # T7f evidence budget: showdown evidence requires calling, but the
+        # clamp requires evidence — circular, and T7d's guard shuts the very
+        # calls that feed opp_honest (firing check: 0/123, voluntary rate 2%).
+        # Break it: the first 5 voluntary calls run REDUCED gates (threshold
+        # 0.30, no early pass-gate) to buy evidence fast (~turn 15, bounded
+        # tuition); afterwards a still-clean opponent (0 revealed bluffs) is
+        # treated as a never-bluffer: silence + small-bluff exploit below.
+        # Self-corrects on first revealed bluff. Random-cell is the tripwire
+        # (misfire vs real bluffers would crash it from 98-100%).
+        budget = (self.opp_bluffs == 0 and self._vol_calls < 5)
+        if self.opp_bluffs == 0 and self._vol_calls >= 5:
             return False
 
         # 1b. Combinatorial Certainty (relocated below Honest rule so a
         # classified never-bluffer is never "certainly" called):
         if counting_p >= 0.999:
+            self._vol_calls += 1
             return True
 
         # 2. Bayesian Opponent Modeling with Archetype-Conditioned Thompson Sampling (ADR-012)
@@ -415,11 +429,11 @@ class AcademicBeastBot(BotInterface):
                             and self.opp_bluffs >= 3)
 
         # 3. Game-Theoretic Honest Grounding (Yeung 2008 / Southey 2005)
-        if overall_bluff_p < 0.15 and counting_p < 0.95 and not counter_detected:
+        if overall_bluff_p < 0.15 and counting_p < 0.95 and not counter_detected and not budget:
             return False
 
         # 4. Dewey (2025) Stake-Sensitive Risk-Adjusted EV Calling:
-        base_threshold = 0.35 if counter_detected else 0.50
+        base_threshold = 0.30 if budget else (0.35 if counter_detected else 0.50)
         stake_adjustment = math.tanh((pile_size - 3.0) / 6.0) * 0.25
         deception_discount = (overall_bluff_p - 0.20) * 0.50
 
@@ -464,7 +478,10 @@ class AcademicBeastBot(BotInterface):
 
         fused_p = w_model * model_p + w_count * counting_p
 
-        return fused_p > dynamic_threshold
+        called = fused_p > dynamic_threshold
+        if called:
+            self._vol_calls += 1
+        return called
 
     def to_dict(self) -> dict:
         return {
