@@ -7,10 +7,13 @@ Implements docs/neural-network.md:
 - Reward shaping (ADR 2026-09-10 "potential-based hand shaping"): win ±1,
   draw −0.5, hand-size-delta potential 0.03/card, flat time cost 0.01/step
 - GAE(λ=0.95), PPO clip 0.2, 4 epochs/update, entropy annealing 0.05→0.01
+- Optional R-NaD path (--use-rnad): population baseline, KL regularization,
+  exploitability metric. Disabled by default — PPO path is byte-identical.
 
 Usage:
     python -m nn.training --episodes 2000 --output nn/checkpoints/final.pt
     python -m nn.training --episodes 200000 --ent-coef 0.01 --log data/terminal/training.jsonl
+    python -m nn.training --episodes 5000 --use-rnad --kl-coef 0.01
 """
 
 import argparse
@@ -440,6 +443,36 @@ def compute_gae(transitions: List[Transition], gamma: float, lam: float):
     return advantages, returns
 
 
+def compute_gae_rnad(transitions: List[Transition], v_bar: torch.Tensor,
+                     gamma: float, lam: float):
+    """GAE with population baseline V-bar instead of critic value.
+
+    delta = r + gamma * Vbar_next * (1-done) - Vbar
+    A     = delta + gamma * lam * (1-done) * A_next   (reversed)
+    returns = A + Vbar
+
+    v_bar: (T,) CPU tensor of per-transition population baseline values.
+    """
+    n = len(transitions)
+    advantages = [0.0] * n
+    returns = [0.0] * n
+    gae = 0.0
+    vbar_next = 0.0
+    for t in reversed(range(n)):
+        tr = transitions[t]
+        if tr.done:
+            gae = 0.0
+            vbar_next = 0.0
+        else:
+            vbar_next = v_bar[t + 1].item() if t + 1 < n else 0.0
+        vbar_t = v_bar[t].item()
+        delta = tr.reward + gamma * vbar_next * (0 if tr.done else 1) - vbar_t
+        gae = delta + gamma * lam * (0 if tr.done else gae)
+        advantages[t] = gae
+        returns[t] = gae + vbar_t
+    return advantages, returns
+
+
 def ppo_update(net: "BluffNet | BluffNetXL", optimizer: torch.optim.Optimizer,
                transitions: List[Transition], clip_eps: float = 0.2,
                epochs: int = 4, batch_size: int = 256, gamma: float = 0.99,
@@ -500,9 +533,107 @@ def ppo_update(net: "BluffNet | BluffNetXL", optimizer: torch.optim.Optimizer,
     return {k: v / max(1, updates) for k, v in metrics.items()}
 
 
-# ---------------------------------------------------------------------------
-# Opponent pool
-# ---------------------------------------------------------------------------
+def rnad_update(net, optimizer, transitions, pool: OpponentPool,
+                clip_eps=0.2, epochs=4, batch_size=256, gamma=0.99,
+                lam=0.95, ent_coef=0.02, vf_coef=0.5, kl_coef=0.01,
+                v_bar_ema: Optional[float] = None,
+                max_grad_norm: float = 0.5) -> dict:
+    """R-NaD style update: PPO + population baseline GAE + KL regularization.
+
+    Structurally mirrors ppo_update (same minibatch loop, masking, clipping)
+    but uses:
+      1. V-bar (population baseline) instead of critic value for GAE.
+      2. KL(softmax(logits) || softmax(pool_centroid_logits)) as a regularizer.
+
+    Returns (metrics_dict, updated_v_bar_ema).
+    """
+    device = next(net.parameters()).device
+
+    # --- V-bar computation (population baseline) ---
+    states_dev = torch.stack([t.state for t in transitions]).to(device)
+    with torch.no_grad():
+        v_bar_raw = pool.population_baseline(states_dev, net)  # (T,) CPU
+
+    # EMA smoothing of V-bar across updates (Oracle risk #1 mitigation)
+    alpha = 0.1  # EMA weight for current observation
+    if v_bar_ema is None:
+        v_bar_ema = v_bar_raw.mean().item()
+    else:
+        v_bar_ema = alpha * v_bar_raw.mean().item() + (1 - alpha) * v_bar_ema
+
+    # --- GAE with V-bar baseline ---
+    advantages, returns = compute_gae_rnad(transitions, v_bar_raw, gamma, lam)
+
+    # --- Centroid logits for KL ---
+    centroid_logits = pool.centroid_logits(states_dev)  # (action_dim,) CPU
+    has_kl = centroid_logits is not None and kl_coef > 0
+
+    actions = torch.tensor([t.action for t in transitions],
+                           dtype=torch.long, device=device)
+    masks = torch.stack([t.mask for t in transitions]).to(device)
+    old_logp = torch.tensor([t.log_prob for t in transitions], device=device)
+    adv = torch.tensor(advantages, dtype=torch.float32, device=device)
+    ret = torch.tensor(returns, dtype=torch.float32, device=device)
+    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+    if has_kl:
+        ref_logits = centroid_logits.to(device)
+
+    n = len(transitions)
+    metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "kl": 0.0}
+    updates = 0
+
+    for _ in range(epochs):
+        perm = torch.randperm(n, device=device)
+        for start in range(0, n, batch_size):
+            mb = perm[start:start + batch_size]
+            logits, values = net(states_dev[mb])
+            masked = logits.clone()
+            masked[~masks[mb]] = float("-inf")
+            logp_all = F.log_softmax(masked, dim=-1)
+            new_logp = logp_all.gather(1, actions[mb].unsqueeze(1)).squeeze(1)
+
+            probs = logp_all.exp()
+            entropy = -(probs * logp_all.masked_fill(~masks[mb], 0.0)).sum(-1).mean()
+
+            ratio = (new_logp - old_logp[mb]).exp()
+            mb_adv = adv[mb]
+            surr1 = ratio * mb_adv
+            surr2 = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * mb_adv
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = F.mse_loss(values.squeeze(-1), ret[mb])
+
+            # KL(π || π_pool): KL(softmax(logits) || softmax(ref_logits))
+            # averaged over minibatch — no grad on ref.
+            # Masked to legal actions only to avoid 0*(-inf)=NaN on illegal.
+            kl_term = torch.tensor(0.0, device=device)
+            if has_kl:
+                pi = probs  # (mb_size, action_dim), already softmax
+                ref_prob = F.softmax(ref_logits, dim=-1)  # (action_dim,)
+                legal = masks[mb]  # (mb_size, action_dim) bool
+                # log pi over legal actions (illegal entries zeroed out)
+                log_pi = logp_all.masked_fill(~legal, 0.0)
+                # log ref over legal actions (illegal entries zeroed out)
+                log_ref = ref_prob.log().unsqueeze(0).expand_as(pi).masked_fill(~legal, 0.0)
+                # KL = sum_legal( pi * (log pi - log ref) )
+                kl_per_action = pi * (log_pi - log_ref)
+                kl_term = kl_per_action.sum(-1).mean()  # scalar
+
+            loss = policy_loss + vf_coef * value_loss - ent_coef * entropy + kl_coef * kl_term
+
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_grad_norm)
+            optimizer.step()
+
+            for k, v in (("policy_loss", policy_loss.item()),
+                         ("value_loss", value_loss.item()),
+                         ("entropy", entropy.item()),
+                         ("kl", kl_term.item())):
+                metrics[k] += v
+            updates += 1
+
+    avg_metrics = {k: v / max(1, updates) for k, v in metrics.items()}
+    return avg_metrics, v_bar_ema
 
 class OpponentPool:
     """Snapshot pool per docs/neural-network.md (pool_size=30)."""
@@ -517,6 +648,53 @@ class OpponentPool:
         self.snaps.append(snap)
         if len(self.snaps) > self.pool_size:
             self.snaps.pop(0)
+
+    def population_baseline(self, states: torch.Tensor,
+                            current_net: "BluffNet | BluffNetXL") -> torch.Tensor:
+        """Mean critic-head value across all pool snapshots + current net.
+
+        Returns a (B,) tensor on CPU. Pool snapshots live on CPU — they are
+        moved to the current net's device temporarily during the forward pass
+        and then freed.  Simple, correct, no caching.
+        """
+        device = next(current_net.parameters()).device
+        B = states.shape[0]
+        # Collect current-net values (already on device)
+        with torch.no_grad():
+            _, vals = current_net(states.to(device))
+            acc = vals.squeeze(-1).cpu()  # (B,)
+        count = 1
+        # Add each pool snapshot
+        for snap in self.snaps:
+            snap_dev = next(snap.net.parameters()).device
+            with torch.no_grad():
+                _, vals = snap.net(states.to(snap_dev))
+                acc = acc + vals.squeeze(-1).cpu()
+            count += 1
+        return acc / count
+
+    def centroid_logits(self, states: torch.Tensor) -> Optional[torch.Tensor]:
+        """Weighted-mean actor logits across pool snapshots (no current net).
+
+        Args:
+            states: (B, state_dim) tensor — used to run forward passes.
+        Returns:
+            (action_dim,) CPU tensor — the population centroid KL reference.
+            Uniform weight over snapshots; current net excluded.
+        """
+        if not self.snaps:
+            return None
+        acc = None
+        for snap in self.snaps:
+            sdev = next(snap.net.parameters()).device
+            with torch.no_grad():
+                logits, _ = snap.net(states.to(sdev))
+                l_cpu = logits.mean(dim=0).cpu()  # (action_dim,)
+                if acc is None:
+                    acc = l_cpu
+                else:
+                    acc = acc + l_cpu
+        return acc / len(self.snaps)
 
     def sample(self, latest: NNPlayer):
         """Opponent sampling with a scripted-opponent floor (40%).
@@ -567,6 +745,47 @@ def evaluate(net: BluffNet, opponent: RulePlayer, num_games: int,
     return wins / max(1, num_games), bluffs / max(1, plays)
 
 
+def compute_exploitability(net: BluffNet, pool: OpponentPool,
+                           encoder: StateEncoder,
+                           num_games: int = 50) -> float:
+    """Max over pool members of (member-vs-net winrate) - 0.5.
+
+    Lightweight proxy for exploitability: the worst-case win-rate advantage
+    any pool member has against the current net.  At Nash equilibrium this
+    is 0.  We only evaluate NN pool snapshots (scripted bots are always
+    available but this metric tracks convergence of the learned population).
+    """
+    if not pool.snaps:
+        return 0.0
+    max_wr = 0.0
+    for snap_player in pool.snaps:
+        # snap_player.net plays as agent_seat=0; net plays as opponent
+        # We want: how well does snap beat net?  So snap is agent (seat 0),
+        # net is opponent (seat 1).
+        def _make_opponent(n=net, e=encoder):
+            """Closure wrapping the current net as a RulePlayer-like opponent."""
+            class _NNOpponent:
+                def __init__(self, net, enc):
+                    self.nn_player = NNPlayer(net, enc)
+                def decide_play(self, game, seat, deterministic=False):
+                    return self.nn_player.decide_play(game, seat, deterministic)
+                def decide_respond(self, game, seat, deterministic=False):
+                    return self.nn_player.decide_respond(game, seat, deterministic)
+            return _NNOpponent(n, e)
+
+        opp = _make_opponent()
+        wins = 0
+        for i in range(num_games):
+            # snap_player is agent (seat 0), net-based opp is seat 1
+            _, winner, _ = play_training_game(
+                snap_player, opp, agent_seat=0, deterministic=True)
+            if winner == 0:
+                wins += 1
+        wr = wins / max(1, num_games)
+        max_wr = max(max_wr, wr)
+    return max_wr - 0.5
+
+
 def save_checkpoint(net: BluffNet, path: str,
                     state_dim: Optional[int] = None,
                     action_dim: int = 54):
@@ -603,12 +822,21 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
           eval_interval: int = 500, eval_games: int = 40,
           pool_size: int = 30, seed: int = 0, log_jsonl: Optional[str] = None,
           device: str = "auto", ablate_opponent_features: bool = False,
-          init_from: Optional[str] = None, hybrid: bool = False):
+          init_from: Optional[str] = None, hybrid: bool = False,
+          use_rnad: bool = False, kl_coef: float = 0.01,
+          kl_coef_end: float = 0.001):
     """PPO training with linear entropy annealing (ADR 2026-08-11: 0.05→0.01).
 
     ent_coef is the START value; it anneals linearly to ent_coef_end across
     the run. High early entropy explores bluffing; the low tail lets the
     policy converge (Patwa 2026, SplendorRL anneal schedules).
+
+    use_rnad: when True, switches the update to R-NaD (population baseline
+    GAE + KL regularization). When False (default), the code path is
+    byte-identical to pure PPO.
+
+    kl_coef is the START value for KL regularization; it anneals linearly
+    to kl_coef_end across the run (same pattern as ent_coef).
 
     device: "auto" uses CUDA when available. NOTE (ADR 2026-09-10): the
     BluffNet backbone is tiny (~100k params) and rollout collection is
@@ -664,9 +892,12 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
     best_eval = -1.0
     metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0}
     last_metrics = None
+    v_bar_ema: Optional[float] = None  # EMA of V-bar across updates (R-NaD)
 
-    print(f"Training PPO: episodes={episodes} batch={batch_size} "
-          f"ent_coef={ent_coef} lr={lr}")
+    mode = "R-NaD" if use_rnad else "PPO"
+    print(f"Training {mode}: episodes={episodes} batch={batch_size} "
+          f"ent_coef={ent_coef} lr={lr}"
+          + (f" kl_coef={kl_coef}→{kl_coef_end}" if use_rnad else ""))
     print(f"Output: {output}")
 
     while episode < episodes:
@@ -691,12 +922,20 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
             logger.log_game_end_simple(winner, agent_seat,
                                        num_turns=stats["turns"])
 
-        # ---- PPO update when buffer full ----
+        # ---- update when buffer full ----
         if len(buffer) >= batch_size:
             ent_now = ent_coef + (ent_coef_end - ent_coef) * min(
                 1.0, episode / max(1, episodes))
-            metrics = ppo_update(net, optimizer, buffer, clip_eps, epochs,
-                                 minibatch, gamma, lam, ent_now)
+            if use_rnad:
+                kl_now = kl_coef + (kl_coef_end - kl_coef) * min(
+                    1.0, episode / max(1, episodes))
+                metrics, v_bar_ema = rnad_update(
+                    net, optimizer, buffer, pool, clip_eps, epochs,
+                    minibatch, gamma, lam, ent_now, kl_coef=kl_now,
+                    v_bar_ema=v_bar_ema)
+            else:
+                metrics = ppo_update(net, optimizer, buffer, clip_eps, epochs,
+                                     minibatch, gamma, lam, ent_now)
             buffer = []
             pool.add(net)
             last_metrics = metrics
@@ -713,11 +952,21 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
                 evals[opp_name] = (wr, bl)
             metrics_str = (f" | pl={metrics['policy_loss']:.3f} "
                            f"vl={metrics['value_loss']:.3f} "
-                           f"ent={metrics['entropy']:.3f}") if last_metrics else ""
+                           f"ent={metrics['entropy']:.3f}"
+                           + (f" kl={metrics['kl']:.4f}"
+                              if use_rnad and 'kl' in metrics else "")
+                           ) if last_metrics else ""
             per_opp = " ".join(f"vs {n}={w:.0%}(b{b:.0%})"
                                for n, (w, b) in evals.items())
+            # R-NaD exploitability metric (lightweight — only when enabled)
+            expl_str = ""
+            expl_val = 0.0
+            if use_rnad:
+                expl_val = compute_exploitability(net, pool, encoder,
+                                                  num_games=min(eval_games, 50))
+                expl_str = f" expl={expl_val:.3f}"
             print(f"[ep {episode:>6d}] {per_opp} | recent={wins_recent}/"
-                  f"{games_recent} | pool={len(pool.snaps)}{metrics_str}",
+                  f"{games_recent} | pool={len(pool.snaps)}{metrics_str}{expl_str}",
                   flush=True)
             last_metrics = metrics if len(buffer) == 0 else last_metrics
             wins_recent, games_recent = 0, 0
@@ -729,17 +978,20 @@ def train(episodes: int = 2000, output: str = "nn/checkpoints/final.pt",
             #   than eval_interval episodes (best-only saving cost us v6.1).
             # - _eval.jsonl — machine-readable eval curve; stdout used to be
             #   the only record and died with the process.
+            eval_record = {
+                "record": "eval",
+                "episode": episode,
+                "opponents": {n: [round(w, 4), round(b, 4)]
+                              for n, (w, b) in evals.items()},
+                "best_combined": round(max(best_eval, score), 4),
+                "timestamp": time.time(),
+            }
+            if use_rnad:
+                eval_record["exploitability"] = round(expl_val, 4)
             save_checkpoint(net, output.replace(".pt", "_latest.pt"))
             with open(output.replace(".pt", "_eval.jsonl"), "a",
                       encoding="utf-8") as ef:
-                ef.write(json.dumps({
-                    "record": "eval",
-                    "episode": episode,
-                    "opponents": {n: [round(w, 4), round(b, 4)]
-                                  for n, (w, b) in evals.items()},
-                    "best_combined": round(max(best_eval, score), 4),
-                    "timestamp": time.time(),
-                }) + "\n")
+                ef.write(json.dumps(eval_record) + "\n")
             if score > best_eval:
                 best_eval = score
                 save_checkpoint(net, output)
@@ -778,6 +1030,16 @@ def main():
                         help="v8: append 3 Bayesian pool-math features "
                              "(39→42 dims) — the HybridBot thesis experiment "
                              "(research claim #2).")
+    parser.add_argument("--use-rnad", action="store_true", default=False,
+                        help="Enable R-NaD update (population baseline GAE + "
+                             "KL regularization). Default off — pure PPO path "
+                             "is byte-identical when disabled.")
+    parser.add_argument("--kl-coef", type=float, default=0.01,
+                        help="KL regularization coefficient at start "
+                             "(anneals to --kl-coef-end, R-NaD only)")
+    parser.add_argument("--kl-coef-end", type=float, default=0.001,
+                        help="KL regularization coefficient at end "
+                             "(R-NaD only)")
     args = parser.parse_args()
 
     train(episodes=args.episodes, output=args.output, ent_coef=args.ent_coef,
@@ -786,7 +1048,9 @@ def main():
           eval_games=args.eval_games, batch_size=args.batch_size,
           seed=args.seed, log_jsonl=args.log, device=args.device,
           ablate_opponent_features=args.ablate_opponent_features,
-          init_from=args.init_from, hybrid=args.hybrid)
+          init_from=args.init_from, hybrid=args.hybrid,
+          use_rnad=args.use_rnad, kl_coef=args.kl_coef,
+          kl_coef_end=args.kl_coef_end)
 
 
 if __name__ == "__main__":
