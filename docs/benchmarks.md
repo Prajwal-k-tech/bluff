@@ -814,3 +814,17 @@ Per-persona top deltas (PureBayes − Balanced): Aggressive_Bluffer +4.8%, Multi
 
 
 
+
+## T7a — nn_floor × Thompson sweep on AcademicBeastBot (2026-09-12, solo-boss Tess)
+Grid: nn_floor {0.00, 0.15, 0.30} × thompson {ON, OFF} = 6 conds × 4 rule opponents (Honest/Bayesian/CardCount/Random) × N=100, strict 50/50 seats, seed 20260915. Harness `experiments/nn_floor_sweep.py` (test_bots.py-identical observe/fabricated-pass, Wilson CIs). Records: `data/nn_floor_sweep.json` (2,400 games).
+
+| Condition | Total W/L/D | Win% | vs Honest | vs Bayesian | vs CardCount | vs Random |
+|---|---|---|---|---|---|---|
+| floor0.00 ON | 190/5/205 | 47.5% | 29.0% | 61.0% | 0.0% | 100% |
+| floor0.00 OFF | 203/4/193 | 50.8% | 45.0% | 60.0% | 0.0% | 98.0% |
+| floor0.15 ON (default) | 208/5/187 | 52.0% | 46.0% | 62.0% | 1.0% | 99.0% |
+| floor0.15 OFF | 207/3/190 | 51.8% | 43.0% | 64.0% | 0.0% | 100% |
+| floor0.30 ON | 200/4/196 | 50.0% | 46.0% | 54.0% | 1.0% | 99.0% |
+| floor0.30 OFF | 184/6/210 | 46.0% | 26.0% | 58.0% | 0.0% | 100% |
+
+**Verdict: FLAT.** All 6 conditions within ±5pp total-game noise (400 games/cond); default (0.15, ON) numerically top, no better operating point. Thompson × floor interaction suggestive (OFF better at floor 0.00, ON better at 0.30) but not significant. Structural findings, condition-invariant: CardCount hard-counters the Beast (0–1W/100 in ALL conditions — the SOTA gap is counting-defense, not threshold tuning); ~50% draws (100-turn cap) dominate totals; Honest exploits over-calling (26–46%). `risk_aversion` verified stored-but-unused — excluded from sweep. **Recommendation: keep defaults, no config change.**
