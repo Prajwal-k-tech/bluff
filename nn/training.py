@@ -554,7 +554,12 @@ def rnad_update(net, optimizer, transitions, pool: OpponentPool,
     with torch.no_grad():
         v_bar_raw = pool.population_baseline(states_dev, net)  # (T,) CPU
 
-    # EMA smoothing of V-bar across updates (Oracle risk #1 mitigation)
+    # EMA of the V-bar MEAN across updates (audit 2026-09-12: scalar monitor
+    # only — GAE below deliberately uses raw per-state V-bar. A scalar EMA
+    # cannot smooth per-state values (uniform shifts cancel in GAE deltas),
+    # and cross-update vector EMA is ill-defined (states differ per update).
+    # Raw V-bar stands (adequate for 2-player, pool=30); revisit only if
+    # pilot advantage variance explodes.
     alpha = 0.1  # EMA weight for current observation
     if v_bar_ema is None:
         v_bar_ema = v_bar_raw.mean().item()
@@ -681,6 +686,10 @@ class OpponentPool:
         Returns:
             (action_dim,) CPU tensor — the population centroid KL reference.
             Uniform weight over snapshots; current net excluded.
+            AUDIT NOTE (2026-09-12): state-INDEPENDENT global average, not a
+            per-state (T,A) centroid — a valid drift anchor but weaker than
+            true R-NaD regularization. Per-state refinement queued if pilot
+            KL reads inert (flat ~0) or explosive.
         """
         if not self.snaps:
             return None
