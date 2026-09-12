@@ -846,3 +846,8 @@ Slices validated by full T7a re-runs (2,400 games each): p_catch fix → CardCou
 - Fix: `_vol_calls` budget — first 5 voluntary calls run reduced gates (threshold 0.30, no pass-gate) to buy evidence by ~turn 15; afterwards a still-clean opponent gets silence + 1-card max-plausibility exploit. Unit-proven (counter init, silence at vol=5, bluffer-lift). All 3 voluntary-True sites increment.
 - Result (2,400 games): Honest UP in 4/6 cells (default 25→41%, best since T7a); CardCount neutral (T7d 6-7% confirmed noise); totals neutral; Random tripwire clear. Forced-call phase + shedding parity remain the wall (~60% draws persist).
 - Lane verdict after 5 slices: defense solved (donations ~0 voluntarily), offense timing improved, residual is structural (forced-phase donations + parity race). BANKED — further slices have negative EV; remaining leverage is v9 (training) + R-NaD pilot (paradigm).
+
+## T7i — fusion-head early-warning eval (2026-09-12) — PARITY, no action
+- v9_best@~145k vs v61_best as AcademicBeastBot heads, vs Honest+Bayesian, N=100, 400 games (data/fusion_head_check.json).
+- Honest: challenger 38.0% [29.1,47.8] vs champion 35.0% [26.4,44.7]. Bayesian: 57.0% [47.2,66.3] vs 54.0% [44.3,63.4]. Both deltas within noise.
+- Verdict: warm-started training preserves head quality (no collapse at 15%); no gain yet. Raw-policy training evals (0% vs non-Random) do NOT transfer to fusion-level pessimism — the deploy stack is intact. Repeat at mid-run (~500k).
