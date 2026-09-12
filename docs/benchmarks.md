@@ -262,6 +262,36 @@ Verdict: FLAT response — ent 0.02-start is indistinguishable from v7's 0.05-st
 
 Sweep verdict (ent ∈ {0.01, 0.02, 0.05}): NO material difference anywhere — outcomes 0% vs competent bots in all three configs, calibration curves near-identical, no deterministic collapse even at flat 0.01 (bluff rates healthy across opponents). Entropy is NOT a lever in this setup; the architecture (conditioning + league + shaping + credit fix) dominates. Claim #3 reframed: entropy guards against collapse (v1's 0.0 lesson stands) but 0.01–0.05 is a flat plateau — tuning frontier moves to roster/curriculum/thresholds, not ent_coef. (Muse solo sweep, PIDs 93152/111923.)
 
+### v8 (`nn/checkpoints/v8.pt`, 39-dim, 400k completed, clean scratch seed 7)
+
+> Completed 2026-09-12. v61 recipe (STATE_DIM 39, conditioned encoder, credit-fixed loop), ent-coef 0.02→0.01, 400k episodes (largest PPO run to date), CPU, eval every 5k. Solo run (PID 24593).
+
+`python -m nn.benchmark --checkpoint nn/checkpoints/v8_best.pt --games 500 --seed 42`:
+
+| Matchup | W/L/D | Win rate | Bluff rate |
+|---|---|---|---|
+| PureNN vs Random | 500-0-0 | 100% | 44% |
+| PureNN vs Honest | 0-98-402 | 0% | 11% |
+| PureNN vs CardCount | 0-52-448 | 0% | 6% |
+| PureNN vs Bayesian | 0-60-440 | 0% | 13% |
+
+Verdict: **FAILS to improve on v61_best (210 vs 149 total losses, +41%).** Longer training + ent 0.02 does not fix the respond-head degeneracy — the failure is architectural/training-signal (the pool never punishes over-calling because the pool itself over-calls), not compute-bound. **Deployment checkpoint stays v61_best.pt.** The NEXT retrain needs a respond-side reward/credit change, not more episodes of this recipe.
+
+### v8 (`nn/checkpoints/v8.pt`, 39-dim, 400k completed, clean scratch seed 7)
+
+> Completed 2026-09-12. v61 recipe (STATE_DIM 39, conditioned encoder, credit-fixed loop), ent-coef 0.02→0.01, 400k episodes (largest PPO run to date), CPU, eval every 5k. Solo run (PID 24593).
+
+`python -m nn.benchmark --checkpoint nn/checkpoints/v8_best.pt --games 500 --seed 42`:
+
+| Matchup | W/L/D | Win rate | Bluff rate |
+|---|---|---|---|
+| PureNN vs Random | 500-0-0 | 100% | 44% |
+| PureNN vs Honest | 0-98-402 | 0% | 11% |
+| PureNN vs CardCount | 0-52-448 | 0% | 6% |
+| PureNN vs Bayesian | 0-60-440 | 0% | 13% |
+
+Verdict: **FAILS to improve on v61_best (210 vs 149 total losses, +41%).** Longer training + ent 0.02 does not fix the respond-head degeneracy — the failure is architectural/training-signal (the pool never punishes over-calling because the pool itself over-calls), not compute-bound. **Deployment checkpoint stays v61_best.pt.** The NEXT retrain needs a respond-side reward/credit change, not more episodes of this recipe.
+
 ---
 
 ## 3. Full round-robin incl. trained NN & HybridBot (E4)

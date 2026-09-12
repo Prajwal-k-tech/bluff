@@ -3,22 +3,22 @@
     "conditioned": {
       "persona": "Passive_Honest",
       "condition": "conditioned",
-      "seed": 20260913,
-      "w": 97,
+      "seed": 20261156,
+      "w": 99,
       "l": 0,
-      "d": 3,
-      "win_rate": 97.0,
+      "d": 1,
+      "win_rate": 99.0,
       "w_ci": [
-        91.5479219195973,
-        98.9745661776585
+        94.55124752390654,
+        99.82326134344525
       ],
-      "a_call": 4.431599229287091,
-      "s_lock": 2.87
+      "a_call": 4.86322188449848,
+      "s_lock": 2.39
     },
     "always_thompson": {
       "persona": "Passive_Honest",
       "condition": "always_thompson",
-      "seed": 20260913,
+      "seed": 20261655,
       "w": 96,
       "l": 0,
       "d": 4,
@@ -27,23 +27,23 @@
         90.16278276739263,
         98.4336949448152
       ],
-      "a_call": 4.787234042553192,
-      "s_lock": 2.66
+      "a_call": 4.943820224719101,
+      "s_lock": 3.18
     },
     "never_thompson": {
       "persona": "Passive_Honest",
       "condition": "never_thompson",
-      "seed": 20260913,
-      "w": 92,
+      "seed": 20260928,
+      "w": 96,
       "l": 0,
-      "d": 8,
-      "win_rate": 92.0,
+      "d": 4,
+      "win_rate": 96.0,
       "w_ci": [
-        85.00173312059694,
-        95.89070305141891
+        90.16278276739263,
+        98.4336949448152
       ],
-      "a_call": 4.411764705882353,
-      "s_lock": 3.57
+      "a_call": 4.116222760290557,
+      "s_lock": 1.9
     },
     "conditioned_beats_best_fixed": true
   },
@@ -51,118 +51,118 @@
     "conditioned": {
       "persona": "Total_Maniac_Extreme",
       "condition": "conditioned",
-      "seed": 20260913,
-      "w": 52,
+      "seed": 20261082,
+      "w": 50,
       "l": 0,
-      "d": 48,
-      "win_rate": 52.0,
+      "d": 50,
+      "win_rate": 50.0,
       "w_ci": [
-        42.31640509017654,
-        61.53561567991945
+        40.38298285901472,
+        59.61701714098528
       ],
-      "a_call": 66.83399067766224,
-      "s_lock": 6.33
+      "a_call": 64.050822122571,
+      "s_lock": 5.01
     },
     "always_thompson": {
       "persona": "Total_Maniac_Extreme",
       "condition": "always_thompson",
-      "seed": 20260913,
-      "w": 59,
+      "seed": 20261790,
+      "w": 51,
       "l": 0,
-      "d": 41,
-      "win_rate": 59.0,
+      "d": 49,
+      "win_rate": 51.0,
       "w_ci": [
-        49.20125056109662,
-        68.13284290433533
+        41.34784047743415,
+        60.578169907613855
       ],
-      "a_call": 66.41373801916933,
-      "s_lock": 4.48
+      "a_call": 67.25365305357812,
+      "s_lock": 4.59
     },
     "never_thompson": {
       "persona": "Total_Maniac_Extreme",
       "condition": "never_thompson",
-      "seed": 20260913,
-      "w": 57,
+      "seed": 20261063,
+      "w": 50,
       "l": 0,
-      "d": 43,
-      "win_rate": 57.0,
+      "d": 50,
+      "win_rate": 50.0,
       "w_ci": [
-        47.21521169586435,
-        66.26686099947162
+        40.38298285901472,
+        59.61701714098528
       ],
-      "a_call": 68.14926498303807,
-      "s_lock": 5.25
+      "a_call": 66.86768357573608,
+      "s_lock": 5.47
     },
-    "conditioned_beats_best_fixed": false
+    "conditioned_beats_best_fixed": true
   },
   {
     "conditioned": {
       "persona": "Hyper_Maniac",
       "condition": "conditioned",
-      "seed": 20260913,
-      "w": 24,
+      "seed": 20261099,
+      "w": 41,
       "l": 0,
-      "d": 76,
-      "win_rate": 24.0,
+      "d": 59,
+      "win_rate": 41.0,
       "w_ci": [
-        16.691211265459966,
-        33.23251872329213
+        31.867157095664655,
+        50.79874943890338
       ],
-      "a_call": 60.44752600063032,
-      "s_lock": 9.21
+      "a_call": 58.22141560798548,
+      "s_lock": 6.98
     },
     "always_thompson": {
       "persona": "Hyper_Maniac",
       "condition": "always_thompson",
-      "seed": 20260913,
-      "w": 30,
+      "seed": 20261598,
+      "w": 40,
       "l": 0,
-      "d": 70,
-      "win_rate": 30.0,
+      "d": 60,
+      "win_rate": 40.0,
       "w_ci": [
-        21.89475386622812,
-        39.585038432811956
+        30.93997461136028,
+        49.79992153815976
       ],
-      "a_call": 57.07879564381807,
-      "s_lock": 9.42
+      "a_call": 59.59087860496311,
+      "s_lock": 8.5
     },
     "never_thompson": {
       "persona": "Hyper_Maniac",
       "condition": "never_thompson",
-      "seed": 20260913,
-      "w": 26,
+      "seed": 20261824,
+      "w": 18,
       "l": 0,
-      "d": 74,
-      "win_rate": 26.0,
+      "d": 82,
+      "win_rate": 18.0,
       "w_ci": [
-        18.40457812698646,
-        35.37117263186163
+        11.700131654251038,
+        26.667536024213085
       ],
-      "a_call": 58.89947740547187,
-      "s_lock": 10.45
+      "a_call": 58.86397608370702,
+      "s_lock": 10.27
     },
-    "conditioned_beats_best_fixed": false
+    "conditioned_beats_best_fixed": true
   },
   {
     "conditioned": {
       "persona": "Balanced_Standard",
       "condition": "conditioned",
-      "seed": 20260913,
-      "w": 17,
+      "seed": 20261241,
+      "w": 15,
       "l": 0,
-      "d": 83,
-      "win_rate": 17.0,
+      "d": 85,
+      "win_rate": 15.0,
       "w_ci": [
-        10.893476059773153,
-        25.548181233642975
+        9.305903191162297,
+        23.283733332157837
       ],
-      "a_call": 18.704819277108435,
-      "s_lock": 17.47
+      "a_call": 17.677793904208997,
+      "s_lock": 17.29
     },
     "always_thompson": {
       "persona": "Balanced_Standard",
       "condition": "always_thompson",
-      "seed": 20260913,
+      "seed": 20261565,
       "w": 12,
       "l": 0,
       "d": 88,
@@ -171,23 +171,23 @@
         6.999337365267776,
         19.812268002908368
       ],
-      "a_call": 17.48115051661547,
-      "s_lock": 18.5
+      "a_call": 17.163120567375888,
+      "s_lock": 16.42
     },
     "never_thompson": {
       "persona": "Balanced_Standard",
       "condition": "never_thompson",
-      "seed": 20260913,
-      "w": 11,
+      "seed": 20261838,
+      "w": 10,
       "l": 0,
-      "d": 89,
-      "win_rate": 11.0,
+      "d": 90,
+      "win_rate": 10.0,
       "w_ci": [
-        6.254131955225126,
-        18.631463027903024
+        5.522854161313613,
+        17.43673043676654
       ],
-      "a_call": 18.424793858402047,
-      "s_lock": 19.98
+      "a_call": 17.54774425685026,
+      "s_lock": 19.41
     },
     "conditioned_beats_best_fixed": true
   }

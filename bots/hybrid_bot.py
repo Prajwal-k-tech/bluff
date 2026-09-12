@@ -72,6 +72,7 @@ class HybridBot(BotInterface):
         variance_scaled: bool = True,
         decay_tau: float = 8.0,
         nn_floor: float = 0.15,
+        mean_guard: bool = True,
     ):
         path = checkpoint_path or os.environ.get("BLUFF_NN_CHECKPOINT", DEFAULT_CHECKPOINT)
         if not os.path.exists(path):
@@ -90,6 +91,7 @@ class HybridBot(BotInterface):
         self.variance_scaled = variance_scaled
         self.decay_tau = decay_tau
         self.nn_floor = nn_floor
+        self.mean_guard = mean_guard
         self.net: Optional[BluffNet] = None
         self.encoder = StateEncoder()
         self.player_id: Optional[int] = None
@@ -364,7 +366,17 @@ class HybridBot(BotInterface):
         # Calling an honest play causes caller to absorb the pile (disastrous penalty).
         # If opponent rarely bluffs (overall_p < 0.15), calling plausible claims has
         # strictly negative expected value. Only call if mathematically caught (counting_p >= 0.95).
-        if overall_p < 0.15 and counting_p < 0.95:
+        # MEAN-GUARD FIX (Tess 2026-09-12): the guard MUST use the posterior mean,
+        # not the Thompson sample in overall_p — sample noise defeats the guard
+        # exactly vs honest opponents (diagnosed: 73% wrong calls vs Honest with
+        # the guard present but inert). mean_guard=False preserves the legacy
+        # sampled-guard behavior (matrix control only).
+        if self.mean_guard:
+            _ob = getattr(self.model, "overall_bluff", None)
+            _guard_p = _ob.mean() if _ob is not None else overall_p
+        else:
+            _guard_p = overall_p
+        if _guard_p < 0.15 and counting_p < 0.95:
             return False
 
         nn_p = 0.50

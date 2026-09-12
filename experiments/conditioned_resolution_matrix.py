@@ -34,7 +34,15 @@ PERSONA_NAMES = ["Passive_Honest", "Total_Maniac_Extreme", "Hyper_Maniac", "Bala
 
 
 class AlwaysThompsonHybrid(HybridBot):
-    """The pre-ADR-012 fixed-Thompson behavior: always sample."""
+    """Pre-fix behavior: sampled guard + sampled fusion (the legacy control).
+
+    Forces mean_guard=False so the guard consumes the Thompson sample exactly
+    as the shipped code did before the mean-guard fix.
+    """
+    def __init__(self, **kwargs):
+        kwargs["mean_guard"] = False
+        super().__init__(**kwargs)
+
     def _use_thompson(self) -> bool:
         return True
 
