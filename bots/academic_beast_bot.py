@@ -204,6 +204,20 @@ class AcademicBeastBot(BotInterface):
             cards_to_dump = [c for c in hand if c.rank == best_r][:min(4, rank_counts[best_r])]
             return (cards_to_dump, best_r)
 
+        # T7e (Tess 2026-09-12): never-bluffer small-bluff exploit. Proven
+        # (T7c/d instrumentation): pool-model honest callers (Honest@0.6)
+        # pass all low-P claims free, while the station/Rock honest-only
+        # paths suppress our bluffs → shedding parity → draw-lock. Vs an
+        # empirically proven never-bluffer (same trigger as the T7d silence
+        # rule; self-corrects on first revealed bluff), shed +1/turn with a
+        # 1-card maximum-plausibility bluff no pool caller contests. Sits
+        # after honest multi-dumps (zero-risk sheds keep priority).
+        if self.opp_bluffs == 0 and self.opp_honest >= 6 and len(hand) >= 1:
+            pool_nb = self._remaining_pool(hand, game_state)
+            best_claim = max(pool_nb.items(), key=lambda kv: (kv[1], kv[0].value))[0]
+            bluff_card = next((c for c in hand if c.rank != best_claim), hand[0])
+            return ([bluff_card], best_claim)
+
         # 2. Tactical Archetype Counter: Calling Station catches everything -> NEVER bluff, play 100% honest single cards
         if top_arch == "Calling_Station" and arch_conf >= 0.40 and w_bayes >= 0.35:
             available_ranks = sorted(rank_counts.keys(), key=lambda r: r.value, reverse=True)
@@ -342,17 +356,44 @@ class AcademicBeastBot(BotInterface):
         opp_hand_size = game_state.get("opponent_hand_size", 10)
         pile_size = game_state.get("pile_size", 0)
 
-        # 1. Combinatorial Certainty: Hypergeometric Catching
+        # 1. Combinatorial signal (bypass relocated below Honest rule, T7c)
         counting_p = self.counter.bluff_probability(
             claimed_rank, claim_size, len(hand), opp_hand_size, our_copies=our_copies
         )
-        if counting_p >= 0.999:
-            return True
 
         # Terminal Defense Invariant (ADR-016):
         # If opponent emptied hand (opp_hand_size == 0), passing guarantees 100% loss.
         # Calling strictly dominates passing for any non-zero bluff probability.
         if opp_hand_size == 0:
+            return True
+
+        # T7c (Tess 2026-09-12): Honest-Rock unconditional pass. Spy-proven
+        # (10-game instrument: 342 calls / 458 opps = 75% call rate vs a
+        # NEVER-bluffer, every call wrong, 1655 pile cards absorbed, end
+        # hands 40+ vs <12): combinatorial "certainty" misfires on honest
+        # multi-dumps under the random-hand null (selection effect — see
+        # bots/base.py docstring), and sub-0.80 reads leak threshold calls.
+        # Vs a classified never-bluffer every call is -EV, so pass all
+        # non-forced calls once conf >= 0.80. Forced-call + terminal
+        # invariants above stay first; exploration while unclassified kept.
+        top_arch, arch_conf = self.classifier.top_archetype(
+            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
+        )
+        # T7c+T7d: empirical never-bluffer silence rule. Replaces the dead
+        # Honest_Rock@0.80 archetype trigger (classifier conf vs never-bluffers
+        # caps ~0.4 — the call dimension dominates the mixture, so pool-model
+        # callers read as Calling_Station@1.0). Direct evidence instead:
+        # opp_bluffs counts REVEALED bluffs only (line 111), opp_honest counts
+        # revealed-honest (line 113). 6+ revealed-honest with 0 revealed-bluffs
+        # = sustained never-bluff signature. Self-correcting: one revealed
+        # bluff lifts the rule automatically. Vs such an opponent every call
+        # is -EV (cost = pile, gain = 0).
+        if self.opp_bluffs == 0 and self.opp_honest >= 6:
+            return False
+
+        # 1b. Combinatorial Certainty (relocated below Honest rule so a
+        # classified never-bluffer is never "certainly" called):
+        if counting_p >= 0.999:
             return True
 
         # 2. Bayesian Opponent Modeling with Archetype-Conditioned Thompson Sampling (ADR-012)
@@ -364,18 +405,14 @@ class AcademicBeastBot(BotInterface):
             model_p = self.model.estimate_bluff_probability(opp_hand_size, claimed_rank, claim_size)
             overall_bluff_p = mean_bluff_p
 
-        # T7b-2' (Tess 2026-09-12): retargeted. Instrumentation (10-game spy)
-        # proved CardCount classifies as Calling_Station @ conf 1.0 (379/463
-        # call-time samples, 10/10 end-of-game) — NEVER Balanced_GTO, so the
-        # GTO trigger was dead code. Pool-model callers call wide → station
-        # signature. Their plausible-bluff sheds must be contested: bypass the
-        # early pass gate and lower base threshold, gated at conf>=0.80 to
-        # avoid misfire on uncertain reads. Piles stay small vs stations
-        # (honest-only offense path), bounding wrong-call cost.
-        top_arch, arch_conf = self.classifier.top_archetype(
-            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
-        )
-        counter_detected = (top_arch == "Calling_Station" and arch_conf >= 0.80)
+        # T7b-2' counter gate (top_arch/arch_conf computed above for T7c;
+        # CardCount proven Calling_Station @ conf 1.0 by instrumentation).
+        # T7d guard: pool-model HONEST callers share the station signature
+        # (HonestBot = Calling_Station@1.0 — the call dimension dominates the
+        # mixture), so require REVEALED-bluff evidence before contesting sheds:
+        # without it the lowered threshold feeds wrong-call donations.
+        counter_detected = (top_arch == "Calling_Station" and arch_conf >= 0.80
+                            and self.opp_bluffs >= 3)
 
         # 3. Game-Theoretic Honest Grounding (Yeung 2008 / Southey 2005)
         if overall_bluff_p < 0.15 and counting_p < 0.95 and not counter_detected:
