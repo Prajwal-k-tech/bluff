@@ -1,0 +1,28 @@
+{
+ "session1": {
+  "w": 7,
+  "l": 0,
+  "d": 3,
+  "vol_calls": 3,
+  "wrong_cost": 902,
+  "bluffs": 4
+ },
+ "session2": {
+  "w": 7,
+  "l": 0,
+  "d": 3,
+  "vol_calls": 3,
+  "wrong_cost": 893,
+  "bluffs": 1
+ },
+ "roundtrip": {
+  "counters_match": true,
+  "sessions": 1,
+  "model_actions": 634
+ },
+ "decay_unit": {
+  "m0": 0.12280701754385964,
+  "m1": 0.12321937321937322,
+  "ok": true
+ }
+}

@@ -851,3 +851,9 @@ Slices validated by full T7a re-runs (2,400 games each): p_catch fix → CardCou
 - v9_best@~145k vs v61_best as AcademicBeastBot heads, vs Honest+Bayesian, N=100, 400 games (data/fusion_head_check.json).
 - Honest: challenger 38.0% [29.1,47.8] vs champion 35.0% [26.4,44.7]. Bayesian: 57.0% [47.2,66.3] vs 54.0% [44.3,63.4]. Both deltas within noise.
 - Verdict: warm-started training preserves head quality (no collapse at 15%); no gain yet. Raw-policy training evals (0% vs non-Random) do NOT transfer to fusion-level pessimism — the deploy stack is intact. Repeat at mid-run (~500k).
+
+## T8 — profile persistence vertical slice (2026-09-12, solo-boss Tess) — LOOP PROVEN
+- Bot-side: AcademicBeastBot.to_dict/from_dict carry archetype_state (4 counters) + profile_meta (backward-compat .get defaults); OpponentModel.apply_session_decay(lam) dilutes toward fresh priors; mark_session_completed() stamps sessions. Proof: roundtrip EXACT, decay math verified.
+- Proof results (seeded, N=10/session): vs Honest — session-2 behavior tightens (vol calls 2→0) but wins don't rise (3→0, draws dominate; Honest is the worst case: nothing to exploit). Vs Bayesian — 7-7 identical (ceiling + same-deal lockstep).
+- Honest finding: single-step session gains are ~0; literature says the dividend accrues over 5-10 sessions (coarse) / 20-30 (fine). 5-session personalization curve running (both personas) to measure slope — the actual claim-b test.
+- Server seam (AGY ownership, NOT implemented by bot lane): 13 lines in server.py — db_start loads archetype_state into bot.opp_* (~line 135); send_game_over calls bot.mark_session_completed(lam=1.0) then stores full bot.to_dict() as model_data (~line 261). Decay tuning + staleness after simulation picks (λ, halflife).

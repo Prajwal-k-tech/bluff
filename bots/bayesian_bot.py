@@ -206,6 +206,26 @@ class OpponentModel:
             model.bluff_by_claim_size[int(k)] = BetaDistribution.from_dict(v)
         return model
 
+    def apply_session_decay(self, lam: float) -> None:
+        """Prior dilution for cross-session persistence (T8 profiling).
+
+        Shrinks every Beta toward its fresh prior: B' = lam*B + (1-lam)*B0,
+        bounding poisoning/staleness impact. lam in [0.5, 1.0] (1.0 = none).
+        Fresh priors mirror __init__: overall_bluff (1,4), rest (1,1).
+        total_actions_observed scales proportionally (TD-MoE re-ramps).
+        """
+        def _dilute(b: BetaDistribution, a0: float, b0: float) -> None:
+            b.alpha = lam * b.alpha + (1.0 - lam) * a0
+            b.beta = lam * b.beta + (1.0 - lam) * b0
+
+        _dilute(self.overall_bluff, 1.0, 4.0)
+        _dilute(self.call_frequency, 1.0, 1.0)
+        for dist in (self.bluff_by_hand_size, self.bluff_by_rank,
+                     self.bluff_by_claim_size):
+            for bb in dist.values():
+                _dilute(bb, 1.0, 1.0)
+        self.total_actions_observed = int(self.total_actions_observed * lam)
+
 
 class BluffTracker:
     """Tracks the bot's own bluff outcomes for adaptive bluff rate.

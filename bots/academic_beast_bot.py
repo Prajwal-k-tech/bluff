@@ -66,6 +66,7 @@ class AcademicBeastBot(BotInterface):
         self.opp_calls: int = 0
         self.opp_passes: int = 0
         self._vol_calls: int = 0  # T7f evidence budget: voluntary calls this game
+        self._sessions_observed: int = 0  # T8 profiling: sessions in this profile
 
         # Load BluffNet or BluffNetXL if available for state evaluation
         self.net: Optional[object] = None
@@ -213,8 +214,17 @@ class AcademicBeastBot(BotInterface):
         # empirically proven never-bluffer (same trigger as the T7d silence
         # rule; self-corrects on first revealed bluff), shed +1/turn with a
         # 1-card maximum-plausibility bluff no pool caller contests. Sits
-        # after honest multi-dumps (zero-risk sheds keep priority).
-        if self.opp_bluffs == 0 and self._vol_calls >= 5 and len(hand) >= 1:
+        # after honest multi-dumps (zero-risk sheds keep priority). T8b: same
+        # loaded-evidence trigger as the silence rule (fires turn 1, session 2+).
+        # T8c pile-aware gating: late/forced-phase bluffs FEED the opponent's
+        # forced calls (vs a never-bluffer every forced exchange ends with us
+        # absorbing, since our bluffs get right-called and their honest plays
+        # get wrong-called by us). Free sheds only count while passes exist
+        # (draw pile alive) and the pile stays small — race to empty first.
+        if (self.opp_bluffs == 0
+                and (self._vol_calls >= 5 or self.opp_honest >= 6)
+                and len(hand) >= 1
+                and draw_pile_size > 0 and pile_size <= 5):
             pool_nb = self._remaining_pool(hand, game_state)
             best_claim = max(pool_nb.items(), key=lambda kv: (kv[1], kv[0].value))[0]
             bluff_card = next((c for c in hand if c.rank != best_claim), hand[0])
@@ -401,7 +411,11 @@ class AcademicBeastBot(BotInterface):
         # Self-corrects on first revealed bluff. Random-cell is the tripwire
         # (misfire vs real bluffers would crash it from 98-100%).
         budget = (self.opp_bluffs == 0 and self._vol_calls < 5)
-        if self.opp_bluffs == 0 and self._vol_calls >= 5:
+        # T8b: trigger also fires on LOADED evidence (opp_honest>=6 survives
+        # via profile) — the in-game path was starved, the load path rescues
+        # it: session 2+ vs a known never-bluffer clamps from turn 1.
+        if self.opp_bluffs == 0 and (self._vol_calls >= 5
+                                     or self.opp_honest >= 6):
             return False
 
         # 1b. Combinatorial Certainty (relocated below Honest rule so a
@@ -484,6 +498,7 @@ class AcademicBeastBot(BotInterface):
         return called
 
     def to_dict(self) -> dict:
+        import time
         return {
             "model": self.model.to_dict(),
             "bluff_tracker": self.bluff_tracker.to_dict(),
@@ -493,6 +508,18 @@ class AcademicBeastBot(BotInterface):
             "nn_floor": self.nn_floor,
             "schedule_type": self.schedule_type,
             "bet_lookahead": self.bet_lookahead,
+            # T8 profiling: archetype counters (sole classifier input) +
+            # profile meta. Without these every session starts uncalibrated.
+            "archetype_state": {
+                "opp_bluffs": self.opp_bluffs,
+                "opp_honest": self.opp_honest,
+                "opp_calls": self.opp_calls,
+                "opp_passes": self.opp_passes,
+            },
+            "profile_meta": {
+                "sessions_observed": self._sessions_observed,
+                "last_updated": time.time(),
+            },
         }
 
     @classmethod
@@ -510,7 +537,25 @@ class AcademicBeastBot(BotInterface):
             bot.model = OpponentModel.from_dict(d["model"])
         if "bluff_tracker" in d:
             bot.bluff_tracker = BluffTracker.from_dict(d["bluff_tracker"])
+        # T8 profiling: backward-compatible (.get defaults) so old DB rows load.
+        arch = d.get("archetype_state", {})
+        bot.opp_bluffs = arch.get("opp_bluffs", 0)
+        bot.opp_honest = arch.get("opp_honest", 0)
+        bot.opp_calls = arch.get("opp_calls", 0)
+        bot.opp_passes = arch.get("opp_passes", 0)
+        bot._sessions_observed = d.get("profile_meta", {}).get(
+            "sessions_observed", 0)
         return bot
+
+    def mark_session_completed(self, lam: float = 1.0) -> None:
+        """T8 profiling: call once at session end before to_dict/save.
+
+        Applies prior-dilution decay (poisoning/staleness guard) then stamps
+        the session count. Server calls this before save_opponent_model.
+        """
+        if lam < 1.0:
+            self.model.apply_session_decay(lam)
+        self._sessions_observed += 1
 
     def save(self, path: str):
         import json
@@ -530,3 +575,8 @@ class AcademicBeastBot(BotInterface):
         self.risk_aversion = loaded.risk_aversion
         self.decay_tau = loaded.decay_tau
         self.nn_floor = loaded.nn_floor
+        self.opp_bluffs = loaded.opp_bluffs
+        self.opp_honest = loaded.opp_honest
+        self.opp_calls = loaded.opp_calls
+        self.opp_passes = loaded.opp_passes
+        self._sessions_observed = loaded._sessions_observed
