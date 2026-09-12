@@ -261,8 +261,17 @@ class AcademicBeastBot(BotInterface):
                         if top_arch == "Calling_Station" and arch_conf >= 0.40:
                             u_bayes = 0.001
                         else:
-                            unseen_count = pool.get(claimed_rank, 0)
-                            p_catch = 1.0 if unseen_count < claim_size else max(0.0, 1.0 - (unseen_count / max(1, claim_size)))
+                            # T7b (Tess 2026-09-12, Oracle design-1): BET p_catch used a
+                            # linear pool formula that returned 0 for every
+                            # combinatorially-possible bluff, systematically
+                            # underestimating catch risk vs counting callers.
+                            # Mirror the caller's own pool-model posterior via
+                            # CardCounter.bluff_probability (same semantics as
+                            # base.py pool model CardCountBot calls at 0.4).
+                            our_copies = sum(1 for c in hand if c.rank == claimed_rank)
+                            p_catch = self.counter.bluff_probability(
+                                claimed_rank, claim_size, len(hand),
+                                opp_hand_size, our_copies=our_copies)
                             effective_call_p = max(call_freq, p_catch)
                             ev_bluff = claim_size - effective_call_p * (pile_size + claim_size)
                             if ev_bluff < 0:
@@ -355,12 +364,25 @@ class AcademicBeastBot(BotInterface):
             model_p = self.model.estimate_bluff_probability(opp_hand_size, claimed_rank, claim_size)
             overall_bluff_p = mean_bluff_p
 
+        # T7b-2' (Tess 2026-09-12): retargeted. Instrumentation (10-game spy)
+        # proved CardCount classifies as Calling_Station @ conf 1.0 (379/463
+        # call-time samples, 10/10 end-of-game) — NEVER Balanced_GTO, so the
+        # GTO trigger was dead code. Pool-model callers call wide → station
+        # signature. Their plausible-bluff sheds must be contested: bypass the
+        # early pass gate and lower base threshold, gated at conf>=0.80 to
+        # avoid misfire on uncertain reads. Piles stay small vs stations
+        # (honest-only offense path), bounding wrong-call cost.
+        top_arch, arch_conf = self.classifier.top_archetype(
+            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
+        )
+        counter_detected = (top_arch == "Calling_Station" and arch_conf >= 0.80)
+
         # 3. Game-Theoretic Honest Grounding (Yeung 2008 / Southey 2005)
-        if overall_bluff_p < 0.15 and counting_p < 0.95:
+        if overall_bluff_p < 0.15 and counting_p < 0.95 and not counter_detected:
             return False
 
         # 4. Dewey (2025) Stake-Sensitive Risk-Adjusted EV Calling:
-        base_threshold = 0.50
+        base_threshold = 0.35 if counter_detected else 0.50
         stake_adjustment = math.tanh((pile_size - 3.0) / 6.0) * 0.25
         deception_discount = (overall_bluff_p - 0.20) * 0.50
 
@@ -370,10 +392,7 @@ class AcademicBeastBot(BotInterface):
             urgency_discount = (3.0 - opp_hand_size) * 0.15
             deception_discount += urgency_discount
 
-        # Archetype adjustments
-        top_arch, arch_conf = self.classifier.top_archetype(
-            self.opp_bluffs, self.opp_honest, self.opp_calls, self.opp_passes
-        )
+        # Archetype adjustments (top_arch/arch_conf computed above for T7b-2)
         if top_arch == "Honest_Rock" and arch_conf >= 0.50 and counting_p < 0.999:
             return False
         if (top_arch == "Hyper_Maniac" or mean_bluff_p >= 0.35) and pile_size <= 4:
