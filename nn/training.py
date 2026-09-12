@@ -570,8 +570,8 @@ def rnad_update(net, optimizer, transitions, pool: OpponentPool,
     advantages, returns = compute_gae_rnad(transitions, v_bar_raw, gamma, lam)
 
     # --- Centroid logits for KL ---
-    centroid_logits = pool.centroid_logits(states_dev)  # (action_dim,) CPU
-    has_kl = centroid_logits is not None and kl_coef > 0
+    centroid_logits_all = pool.centroid_logits(states_dev)  # (T,A) CPU or None
+    has_kl = centroid_logits_all is not None and kl_coef > 0
 
     actions = torch.tensor([t.action for t in transitions],
                            dtype=torch.long, device=device)
@@ -581,7 +581,7 @@ def rnad_update(net, optimizer, transitions, pool: OpponentPool,
     ret = torch.tensor(returns, dtype=torch.float32, device=device)
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
     if has_kl:
-        ref_logits = centroid_logits.to(device)
+        ref_logits_all = centroid_logits_all.to(device)  # (T,A)
 
     n = len(transitions)
     metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "kl": 0.0}
@@ -613,12 +613,12 @@ def rnad_update(net, optimizer, transitions, pool: OpponentPool,
             kl_term = torch.tensor(0.0, device=device)
             if has_kl:
                 pi = probs  # (mb_size, action_dim), already softmax
-                ref_prob = F.softmax(ref_logits, dim=-1)  # (action_dim,)
+                ref_prob_mb = F.softmax(ref_logits_all[mb], dim=-1)  # (mb,A)
                 legal = masks[mb]  # (mb_size, action_dim) bool
                 # log pi over legal actions (illegal entries zeroed out)
                 log_pi = logp_all.masked_fill(~legal, 0.0)
                 # log ref over legal actions (illegal entries zeroed out)
-                log_ref = ref_prob.log().unsqueeze(0).expand_as(pi).masked_fill(~legal, 0.0)
+                log_ref = ref_prob_mb.log().masked_fill(~legal, 0.0)
                 # KL = sum_legal( pi * (log pi - log ref) )
                 kl_per_action = pi * (log_pi - log_ref)
                 kl_term = kl_per_action.sum(-1).mean()  # scalar
@@ -684,12 +684,10 @@ class OpponentPool:
         Args:
             states: (B, state_dim) tensor — used to run forward passes.
         Returns:
-            (action_dim,) CPU tensor — the population centroid KL reference.
-            Uniform weight over snapshots; current net excluded.
-            AUDIT NOTE (2026-09-12): state-INDEPENDENT global average, not a
-            per-state (T,A) centroid — a valid drift anchor but weaker than
-            true R-NaD regularization. Per-state refinement queued if pilot
-            KL reads inert (flat ~0) or explosive.
+            (B, action_dim) CPU tensor — per-state mean actor logits over
+            snapshots (no current net). T7h upgrade (2026-09-12): true
+            population centroid for R-NaD KL (was state-independent global
+            average — valid anchor but not the R-NaD term).
         """
         if not self.snaps:
             return None
@@ -698,12 +696,9 @@ class OpponentPool:
             sdev = next(snap.net.parameters()).device
             with torch.no_grad():
                 logits, _ = snap.net(states.to(sdev))
-                l_cpu = logits.mean(dim=0).cpu()  # (action_dim,)
-                if acc is None:
-                    acc = l_cpu
-                else:
-                    acc = acc + l_cpu
-        return acc / len(self.snaps)
+                l_cpu = logits.cpu()  # (B, action_dim) — per-state (T7h)
+                acc = l_cpu if acc is None else acc + l_cpu
+        return acc / len(self.snaps)  # (B, action_dim)
 
     def sample(self, latest: NNPlayer):
         """Opponent sampling with a scripted-opponent floor (40%).
