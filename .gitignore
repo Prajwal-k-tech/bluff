@@ -51,3 +51,27 @@ data/*.jsonl
 data/experiments/
 tests/e2e/screenshots/
 .pytest_cache/
+
+# Private / unpublished — never commit (agent board + paper drafts + reading notes)
+AGENT_CHAT.md
+worksplit.md
+docs/paper/
+docs/paper-draft.md
+docs/paper-outline.md
+docs/handoff.md
+docs/decisions.md
+docs/timeline.md
+docs/clerk-plan.md
+docs/s3-design.md
+docs/data-pipeline.md
+docs/dataset-request-template.md
+docs/research-papers.md
+docs/research-synthesis.md
+docs/literature-synthesis.md
+docs/academic-beast-tournament-study.md
+docs/adaptive-persona-grid-study.md
+docs/bluffnet-xl-ablation-study.md
+docs/nn-vs-bayesian-empirical-study.md
+docs/claims-drawlock-calibration.md
+docs/next-gen-rl-and-decay-schedules.md
+docs/temporal-decay-mixture-of-experts.md
