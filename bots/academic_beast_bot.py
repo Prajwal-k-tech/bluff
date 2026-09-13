@@ -48,6 +48,7 @@ class AcademicBeastBot(BotInterface):
         schedule_type: str = "exponential",
         use_nn: bool = True,
         bet_lookahead: bool = True,
+        mode: str = "predator",  # P2 F3: "fairfight" or "predator"
     ):
         self.thompson_sampling = thompson_sampling
         self.risk_aversion = risk_aversion
@@ -56,7 +57,11 @@ class AcademicBeastBot(BotInterface):
         self.schedule_type = schedule_type
         self.use_nn = use_nn
         self.bet_lookahead = bet_lookahead
+        self.mode = mode  # P2 F3: "fairfight" or "predator"
+        # P2 F3: variance-gated ramp params (fairfight mode only)
+        self._sigma2_threshold: float = 0.01  # variance threshold for α gating
         self.model = OpponentModel()
+        self._prev_bluff_mean: float = self.model.overall_bluff.mean()
         self.counter = CardCounter()
         self.bluff_tracker = BluffTracker()
         self.player_id: Optional[int] = None
@@ -67,6 +72,9 @@ class AcademicBeastBot(BotInterface):
         self.opp_passes: int = 0
         self._vol_calls: int = 0  # T7f evidence budget: voluntary calls this game
         self._sessions_observed: int = 0  # T8 profiling: sessions in this profile
+        self._games_played: int = 0  # P2: total games persisted for this profile
+        self._accumulated_info: float = 0.0  # P2: sum of |posterior-mean deltas| across sessions
+        self._exploit_depth_this_game: int = 0  # P2 F3: exploit-heavy actions this game (fairfight cap)
 
         # Load BluffNet or BluffNetXL if available for state evaluation
         self.net: Optional[object] = None
@@ -100,6 +108,7 @@ class AcademicBeastBot(BotInterface):
         """Intra-game reset: deck tracking resets, opponent model persists."""
         self.counter = CardCounter()
         self._vol_calls = 0
+        self._exploit_depth_this_game = 0  # P2 F3: reset per-game exploit counter
 
     def observe_action(self, action: Action, opponent_hand_size: int):
         self.model.observe_action(action, opponent_hand_size)
@@ -221,14 +230,19 @@ class AcademicBeastBot(BotInterface):
         # absorbing, since our bluffs get right-called and their honest plays
         # get wrong-called by us). Free sheds only count while passes exist
         # (draw pile alive) and the pile stays small — race to empty first.
+        # R2: increment exploit counter — this is a deliberate exploit of a
+        # classified weak opponent (never-bluffer → guaranteed bluff profit).
         if (self.opp_bluffs == 0
                 and (self._vol_calls >= 5 or self.opp_honest >= 6)
                 and len(hand) >= 1
                 and draw_pile_size > 0 and pile_size <= 5):
-            pool_nb = self._remaining_pool(hand, game_state)
-            best_claim = max(pool_nb.items(), key=lambda kv: (kv[1], kv[0].value))[0]
-            bluff_card = next((c for c in hand if c.rank != best_claim), hand[0])
-            return ([bluff_card], best_claim)
+            if self._exploit_depth_this_game < self.rwyw_exploit_depth_cap():
+                self._exploit_depth_this_game += 1
+                pool_nb = self._remaining_pool(hand, game_state)
+                best_claim = max(pool_nb.items(), key=lambda kv: (kv[1], kv[0].value))[0]
+                bluff_card = next((c for c in hand if c.rank != best_claim), hand[0])
+                return ([bluff_card], best_claim)
+            # Cap hit: fall through to honest play below
 
         # 2. Tactical Archetype Counter: Calling Station catches everything -> NEVER bluff, play 100% honest single cards
         if top_arch == "Calling_Station" and arch_conf >= 0.40 and w_bayes >= 0.35:
@@ -494,6 +508,11 @@ class AcademicBeastBot(BotInterface):
 
         called = fused_p > dynamic_threshold
         if called:
+            # R2: increment exploit counter — model-driven call against a non-
+            # budget, non-counter-detected opponent is an exploit of accumulated
+            # evidence (Thompson + Dewey EV + stake sensitivity).
+            if not budget and not counter_detected:
+                self._exploit_depth_this_game += 1
             self._vol_calls += 1
         return called
 
@@ -508,6 +527,7 @@ class AcademicBeastBot(BotInterface):
             "nn_floor": self.nn_floor,
             "schedule_type": self.schedule_type,
             "bet_lookahead": self.bet_lookahead,
+            "mode": self.mode,  # P2 F3: fairfight / predator
             # T8 profiling: archetype counters (sole classifier input) +
             # profile meta. Without these every session starts uncalibrated.
             "archetype_state": {
@@ -518,6 +538,9 @@ class AcademicBeastBot(BotInterface):
             },
             "profile_meta": {
                 "sessions_observed": self._sessions_observed,
+                "games_played": self._games_played,
+                "accumulated_info": self._accumulated_info,
+                "prev_bluff_mean": self._prev_bluff_mean,  # R3: persist to avoid phantom delta
                 "last_updated": time.time(),
             },
         }
@@ -532,6 +555,7 @@ class AcademicBeastBot(BotInterface):
             nn_floor=d.get("nn_floor", 0.15),
             schedule_type=d.get("schedule_type", "sigmoidal"),
             bet_lookahead=d.get("bet_lookahead", True),
+            mode=d.get("mode", "predator"),  # P2 F3: backward-compat default
         )
         if "model" in d:
             bot.model = OpponentModel.from_dict(d["model"])
@@ -543,19 +567,87 @@ class AcademicBeastBot(BotInterface):
         bot.opp_honest = arch.get("opp_honest", 0)
         bot.opp_calls = arch.get("opp_calls", 0)
         bot.opp_passes = arch.get("opp_passes", 0)
-        bot._sessions_observed = d.get("profile_meta", {}).get(
-            "sessions_observed", 0)
+        pm = d.get("profile_meta", {})
+        bot._sessions_observed = pm.get("sessions_observed", 0)
+        # P2 F2: games_played + accumulated_info (backward-compat .get defaults)
+        bot._games_played = pm.get("games_played", 0)
+        bot._accumulated_info = pm.get("accumulated_info", 0.0)
+        # R3: persist _prev_bluff_mean to avoid phantom ~0.2 delta on first
+        # mark_session_completed after reload. Falls back to current model mean.
+        bot._prev_bluff_mean = pm.get(
+            "prev_bluff_mean", bot.model.overall_bluff.mean())
         return bot
 
-    def mark_session_completed(self, lam: float = 1.0) -> None:
-        """T8 profiling: call once at session end before to_dict/save.
+    def mark_session_completed(self, lam: float = 1.0) -> dict:
+        """T8 profiling + P2 F2: call once at session end before to_dict/save.
 
         Applies prior-dilution decay (poisoning/staleness guard) then stamps
-        the session count. Server calls this before save_opponent_model.
+        the session count and games_played. Computes accumulated_info = sum
+        of absolute posterior-mean deltas across sessions (RWYW proxy).
+
+        Returns telemetry dict for per-game logging (P2 F3).
         """
+        # P2 F2: compute accumulated_info delta BEFORE decay (decay modifies means)
+        current_mean = self.model.overall_bluff.mean()
+        if not hasattr(self, "_prev_bluff_mean"):
+            self._prev_bluff_mean = self.model.overall_bluff.alpha / (
+                self.model.overall_bluff.alpha + self.model.overall_bluff.beta)
+        delta = abs(current_mean - self._prev_bluff_mean)
+        self._accumulated_info += delta
+        self._prev_bluff_mean = current_mean
+
         if lam < 1.0:
             self.model.apply_session_decay(lam)
         self._sessions_observed += 1
+        self._games_played += 1
+
+        return {
+            "sessions_observed": self._sessions_observed,
+            "games_played": self._games_played,
+            "accumulated_info": self._accumulated_info,
+            "bluff_mean": current_mean,
+            "delta": delta,
+        }
+
+    # -- P2 F3: fairfight variance-gated ramp ---------------------------------
+
+    def fairfight_alpha(self) -> float:
+        """Variance-gated exploitation ramp (fairfight mode only).
+
+        α = max(0, 1 - σ² / σ²_thr)
+        High variance (cold start) → α ≈ 0 → capped exploitation.
+        Low variance (converged)   → α ≈ 1 → full exploitation.
+        Predator mode always returns 1.0 (uncapped).
+        """
+        if self.mode != "fairfight":
+            return 1.0
+        var = self.model.overall_bluff.variance()
+        return max(0.0, 1.0 - var / self._sigma2_threshold)
+
+    def rwyw_exploit_depth_cap(self) -> int:
+        """RWYW cap: max number of exploit-heavy actions per game (fairfight).
+
+        exploit_depth ≤ f(accumulated_info). More accumulated info → higher cap.
+        Predator mode returns +∞ (no cap).
+        """
+        if self.mode != "predator":
+            # Linear ramp: 0 info → cap 0, 2+ info → cap 4
+            return min(4, int(self._accumulated_info * 2))
+        return 999999  # effectively uncapped
+
+    def get_fairfight_telemetry(self) -> dict:
+        """Per-game telemetry for fairfight mode (logged at session end)."""
+        alpha = self.fairfight_alpha()
+        cap = self.rwyw_exploit_depth_cap()
+        return {
+            "mode": self.mode,
+            "alpha": round(alpha, 4),
+            "games_played": self._games_played,
+            "accumulated_info": round(self._accumulated_info, 4),
+            "sigma2": round(self.model.overall_bluff.variance(), 6),
+            "rwyw_cap": cap,
+            "cap_hit": self._exploit_depth_this_game >= cap if self.mode == "fairfight" else False,
+        }
 
     def save(self, path: str):
         import json
@@ -580,3 +672,7 @@ class AcademicBeastBot(BotInterface):
         self.opp_calls = loaded.opp_calls
         self.opp_passes = loaded.opp_passes
         self._sessions_observed = loaded._sessions_observed
+        self._games_played = loaded._games_played
+        self._accumulated_info = loaded._accumulated_info
+        self._prev_bluff_mean = loaded._prev_bluff_mean  # R3: restore persisted prev mean
+        self.mode = loaded.mode  # P2 F3: fairfight / predator

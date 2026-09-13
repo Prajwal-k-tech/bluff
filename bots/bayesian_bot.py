@@ -593,6 +593,43 @@ class BayesianBot(BotInterface):
         if is_own and action.was_bluff:
             self.bluff_tracker.record_bluff(action.bluff_called)
 
+    def mark_session_completed(self, lam: float = 1.0) -> dict:
+        """P2 F1: session-end hook for server.py to call before save.
+
+        BayesianBot has no cross-session decay (lam is ignored) — matches
+        the P2 Gate-1 decision to defer λ tuning to P3.
+        Returns telemetry dict for logging.
+        """
+        current_mean = self.model.overall_bluff.mean()
+        return {
+            "sessions_observed": 1,
+            "games_played": 1,
+            "accumulated_info": 0.0,
+            "bluff_mean": current_mean,
+            "delta": 0.0,
+        }
+
+    def to_dict(self) -> dict:
+        """P2 F1: unified serialization interface used by server.py."""
+        return {
+            "model": self.model.to_dict(),
+            "bluff_tracker": self.bluff_tracker.to_dict(),
+            "bluff_threshold": self.bluff_threshold,
+            "call_threshold": self.call_threshold,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "BayesianBot":
+        """P2 F1: load from serialized dict (backward-compat with save format)."""
+        bot = cls()
+        if "model" in d:
+            bot.model = OpponentModel.from_dict(d["model"])
+        if "bluff_tracker" in d:
+            bot.bluff_tracker = BluffTracker.from_dict(d["bluff_tracker"])
+        bot.bluff_threshold = d.get("bluff_threshold", 0.55)
+        bot.call_threshold = d.get("call_threshold", 0.55)
+        return bot
+
     def save(self, path: str):
         data = {
             "model": self.model.to_dict(),

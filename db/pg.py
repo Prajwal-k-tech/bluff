@@ -1,26 +1,32 @@
 """Neon Postgres logging for web games (S3 data pipeline).
 
 Best-effort by design: every public function catches ALL exceptions and
-returns None on failure. Gameplay must NEVER break because the database is
-down, slow, or unconfigured (server runs fine with no DATABASE_URL set).
+logs loudly on failure (never silently swallows). Gameplay must NEVER
+break because the database is down, slow, or unconfigured (server runs
+fine with no DATABASE_URL set).
 
 Schema: db/schema.sql. Anonymous play uses player_id NULL until Clerk token
 verification lands (then bind users.clerk_user_id → per-user opponent models).
 """
 
 import json
+import logging
 import os
 import time
 import traceback
 import uuid
 from typing import Optional
 
+_log = logging.getLogger("bluff.db")
+
 _pool = None
 _warned = False
 
 
 def _warn_once(msg: str) -> None:
+    """P2 F4: loud log on first failure + every subsequent failure."""
     global _warned
+    _log.warning(msg)
     if not _warned:
         _warned = True
         print(f"[db] WARNING: {msg}")
@@ -40,6 +46,7 @@ async def get_pool():
                                           command_timeout=10)
         return _pool
     except Exception as e:  # noqa: BLE001 — must never propagate
+        _log.error("asyncpg pool creation FAILED: %s\n%s", e, traceback.format_exc())
         _warn_once(f"connect failed ({e}); logging disabled for this process")
         return None
 
@@ -70,8 +77,9 @@ async def log_session_start(bot_mode: str,
                     bot_mode,
                 )
             return str(row["id"])
-    except Exception:  # noqa: BLE001
-        _warn_once("log_session_start failed\n" + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("log_session_start FAILED: %s\n%s", e, traceback.format_exc())
+        _warn_once(f"log_session_start failed ({e})")
         return None
 
 
@@ -93,8 +101,9 @@ async def set_model_loaded(session_id, loaded: bool) -> None:
                 "UPDATE game_sessions SET model_loaded = $2 WHERE id = $1",
                 session_id, loaded,
             )
-    except Exception:  # noqa: BLE001
-        _warn_once("set_model_loaded failed\n" + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("set_model_loaded FAILED (session=%s): %s\n%s", session_id, e, traceback.format_exc())
+        _warn_once(f"set_model_loaded failed ({e})")
 
 
 async def log_action(session_id, turn_number: int, player_type: str,
@@ -128,8 +137,10 @@ async def log_action(session_id, turn_number: int, player_type: str,
                 caller_was_right, hand_size, opponent_hand_size, pile_size,
                 p_bluff_estimate, decision_ms,
             )
-    except Exception:  # noqa: BLE001
-        _warn_once("log_action failed\n" + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("log_action FAILED (session=%s turn=%s): %s\n%s",
+                   session_id, turn_number, e, traceback.format_exc())
+        _warn_once(f"log_action failed ({e})")
 
 
 async def log_session_end(session_id, result: str, num_turns: int,
@@ -147,8 +158,9 @@ async def log_session_end(session_id, result: str, num_turns: int,
                 "duration_seconds=$4, finished_at=NOW() WHERE id=$1",
                 session_id, result, num_turns, duration_seconds,
             )
-    except Exception:  # noqa: BLE001
-        _warn_once("log_session_end failed\n" + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("log_session_end FAILED (session=%s): %s\n%s", session_id, e, traceback.format_exc())
+        _warn_once(f"log_session_end failed ({e})")
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +179,9 @@ async def ensure_user(user_id: str) -> None:
                 "ON CONFLICT (id) DO NOTHING",
                 user_id, f"session-{user_id[:8]}",
             )
-    except Exception:  # noqa: BLE001
-        _warn_once("ensure_user failed\n" + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("ensure_user FAILED (user=%s): %s\n%s", user_id, e, traceback.format_exc())
+        _warn_once(f"ensure_user failed ({e})")
 
 
 async def save_opponent_model(user_id: str, bot_id: str,
@@ -193,9 +206,10 @@ async def save_opponent_model(user_id: str, bot_id: str,
                 "updated_at = NOW()",
                 user_id, bot_id, json.dumps(model_data),
             )
-    except Exception:  # noqa: BLE001
-        _warn_once("save_opponent_model failed\n"
-                    + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001 — must never propagate
+        _log.error("save_opponent_model FAILED (user=%s bot=%s): %s\n%s",
+                   user_id, bot_id, e, traceback.format_exc())
+        _warn_once(f"save_opponent_model failed ({e})")
 
 
 async def load_opponent_model(user_id: str, bot_id: str) -> Optional[dict]:
@@ -213,7 +227,8 @@ async def load_opponent_model(user_id: str, bot_id: str) -> Optional[dict]:
             if row is None:
                 return None
             return json.loads(row["model_data"])
-    except Exception:  # noqa: BLE001
-        _warn_once("load_opponent_model failed\n"
-                    + traceback.format_exc(limit=3))
+    except Exception as e:  # noqa: BLE001
+        _log.error("load_opponent_model FAILED (user=%s bot=%s): %s\n%s",
+                   user_id, bot_id, e, traceback.format_exc())
+        _warn_once(f"load_opponent_model failed ({e})")
         return None

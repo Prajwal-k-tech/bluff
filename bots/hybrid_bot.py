@@ -490,6 +490,22 @@ class HybridBot(BotInterface):
             bot.call_threshold = d["call_threshold"]
         return bot
 
+    def mark_session_completed(self, lam: float = 1.0) -> dict:
+        """P2 F1: session-end hook for server.py to call before save.
+
+        HybridBot has no cross-session decay (lam is ignored) — matches
+        the P2 Gate-1 decision to defer λ tuning to P3.
+        Returns telemetry dict for logging.
+        """
+        current_mean = self.model.overall_bluff.mean()
+        return {
+            "sessions_observed": 1,
+            "games_played": 1,
+            "accumulated_info": 0.0,
+            "bluff_mean": current_mean,
+            "delta": 0.0,
+        }
+
     def save(self, path: str):
         import json
         with open(path, "w") as f:

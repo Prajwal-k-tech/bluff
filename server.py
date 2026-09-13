@@ -74,13 +74,24 @@ BOT_CLASSES = {
     "purenn": PureNNBot,
     "hybrid": HybridBot,
     "beast": AcademicBeastBot,
+    # P2 F3: fairfight mode — same codebase, variance-gated ramp + RWYW cap
+    "beast-fair": AcademicBeastBot,
 }
 
 
-def create_bot(name: str) -> BotInterface:
+def create_bot(name: str, mode: Optional[str] = None) -> BotInterface:
+    """Create a bot instance.  P2 F3: mode param overrides bot-embedded mode
+    (e.g. 'beast-fair' forces fairfight; query param ?mode=fairfight on a
+    'beast' entry does the same).  Worksplit-adjacent: mode selection lives
+    here so /rooms only passes a string, never instantiates directly.
+    """
     cls = BOT_CLASSES.get(name)
     if cls is None:
         raise ValueError(f"Unknown bot: {name}")
+    # AcademicBeastBot is the only bot that supports mode (P2 F3).
+    if cls is AcademicBeastBot:
+        resolved_mode = mode or ("fairfight" if name == "beast-fair" else "predator")
+        return cls(mode=resolved_mode)
     return cls()
 
 
@@ -91,10 +102,11 @@ def create_bot(name: str) -> BotInterface:
 class GameRoom:
     """Manages a single game session between a human (WebSocket) and a bot."""
 
-    def __init__(self, room_id: str, bot_name: str = "bayesian"):
+    def __init__(self, room_id: str, bot_name: str = "bayesian",
+                 mode: Optional[str] = None):
         self.room_id = room_id
         self.game = GameState(num_players=2)
-        self.bot: BotInterface = create_bot(bot_name)
+        self.bot: BotInterface = create_bot(bot_name, mode=mode)
         self.bot_name = bot_name
         self.human_id = 0
         self.bot_id = 1
@@ -127,20 +139,55 @@ class GameRoom:
         except Exception:  # noqa: BLE001 — db layer already swallows; belt first
             self.db_session_id = None
         # Load persisted opponent model (best-effort: BayesianBot, HybridBot, AcademicBeastBot)
+        # R1 FIX: for Beast/Hybrid, use from_dict(saved) to restore full state
+        # (archetype_state, profile_meta, mode, all config) then copy onto the
+        # existing bot instance. Per-room mode (from /rooms?mode=...) wins over
+        # the mode saved in DB — a room's creation param is the source of truth.
         if (self.session_user_id and _OpponentModel is not None
                 and isinstance(self.bot, (BayesianBot, HybridBot, AcademicBeastBot))):
             try:
                 saved = await db.load_opponent_model(
                     self.session_user_id, self.bot_name)
                 if saved is not None:
-                    self.bot.model = _OpponentModel.from_dict(saved["model"])
-                    if "bluff_tracker" in saved and _BluffTracker is not None:
-                        self.bot.bluff_tracker = _BluffTracker.from_dict(
-                            saved["bluff_tracker"])
-                    if "bluff_threshold" in saved:
-                        self.bot.bluff_threshold = saved["bluff_threshold"]
-                    if "call_threshold" in saved:
-                        self.bot.call_threshold = saved["call_threshold"]
+                    if isinstance(self.bot, AcademicBeastBot):
+                        loaded = AcademicBeastBot.from_dict(
+                            saved, checkpoint_path=getattr(self.bot, "net", None) and None)
+                        self.bot.model = loaded.model
+                        self.bot.bluff_tracker = loaded.bluff_tracker
+                        self.bot.opp_bluffs = loaded.opp_bluffs
+                        self.bot.opp_honest = loaded.opp_honest
+                        self.bot.opp_calls = loaded.opp_calls
+                        self.bot.opp_passes = loaded.opp_passes
+                        self.bot._sessions_observed = loaded._sessions_observed
+                        self.bot._games_played = loaded._games_played
+                        self.bot._accumulated_info = loaded._accumulated_info
+                        self.bot._prev_bluff_mean = loaded._prev_bluff_mean
+                        # Per-room mode wins over saved mode
+                        if hasattr(self.bot, 'mode'):
+                            pass  # keep self.bot.mode (from room creation param)
+                    elif isinstance(self.bot, HybridBot):
+                        loaded = HybridBot.from_dict(saved)
+                        self.bot.model = loaded.model
+                        self.bot.bluff_tracker = loaded.bluff_tracker
+                        self.bot.bluff_threshold = loaded.bluff_threshold
+                        self.bot.call_threshold = loaded.call_threshold
+                        self.bot.thompson_sampling = loaded.thompson_sampling
+                        self.bot.w_model_cap = loaded.w_model_cap
+                        self.bot.exploit_mult = loaded.exploit_mult
+                        self.bot.call_mult = loaded.call_mult
+                        self.bot.variance_scaled = loaded.variance_scaled
+                        self.bot.decay_tau = loaded.decay_tau
+                        self.bot.nn_floor = loaded.nn_floor
+                    else:
+                        # BayesianBot: old manual path (no from_dict with profile_meta)
+                        self.bot.model = _OpponentModel.from_dict(saved["model"])
+                        if "bluff_tracker" in saved and _BluffTracker is not None:
+                            self.bot.bluff_tracker = _BluffTracker.from_dict(
+                                saved["bluff_tracker"])
+                        if "bluff_threshold" in saved:
+                            self.bot.bluff_threshold = saved["bluff_threshold"]
+                        if "call_threshold" in saved:
+                            self.bot.call_threshold = saved["call_threshold"]
                     self._model_loaded = True
             except Exception:  # noqa: BLE001
                 pass  # fresh model is fine
@@ -255,17 +302,24 @@ class GameRoom:
             message = "You win!" if human_won else "Bot wins!"
             result = "win" if human_won else "loss"
         # Persist opponent model before closing (best-effort: BayesianBot, HybridBot, AcademicBeastBot)
+        # P2 F1: replaced hand-built dict with bot.to_dict() + mark_session_completed()
+        # so archetype_state + profile_meta persist to DB (was silently dropped before).
         if (self.session_user_id
                 and isinstance(self.bot, (BayesianBot, HybridBot, AcademicBeastBot))):
             try:
-                model_data = {
-                    "model": self.bot.model.to_dict(),
-                    "bluff_tracker": self.bot.bluff_tracker.to_dict(),
-                    "bluff_threshold": getattr(self.bot, "bluff_threshold", 0.30),
-                    "call_threshold": getattr(self.bot, "call_threshold", 0.60),
-                }
+                session_info = self.bot.mark_session_completed()  # P2 F1: decay fires, session count stamped
+                model_data = self.bot.to_dict()  # P2 F1: full bot state (archetype + profile_meta included)
                 await db.save_opponent_model(
                     self.session_user_id, self.bot_name, model_data)
+                # P2 F3: per-game telemetry (α, games_played, cap-hit)
+                telemetry = {"session_id": self.db_session_id, "result": result}
+                if isinstance(self.bot, AcademicBeastBot):
+                    telemetry.update(self.bot.get_fairfight_telemetry())
+                else:
+                    telemetry.update(session_info)
+                import logging
+                logging.getLogger("bluff.telemetry").info(
+                    "game_over_telemetry %s", json.dumps(telemetry))
             except Exception:  # noqa: BLE001
                 pass
         await db.log_session_end(
@@ -593,13 +647,20 @@ def _normalize_user_id(raw_id: Optional[str]) -> Optional[str]:
 
 
 @app.post("/rooms")
-def create_room(bot_name: str = "bayesian", user_id: Optional[str] = None):
+def create_room(bot_name: str = "bayesian", user_id: Optional[str] = None,
+                mode: Optional[str] = None):
+    """Create a game room.
+
+    P2 F3: mode param selects fairfight vs predator for beast bots.
+    mode='fairfight' → variance-gated ramp + RWYW cap (fair first game).
+    mode='predator'  → uncapped persistent exploitation (default for beast).
+    """
     room_id = str(uuid.uuid4())[:8]
-    room = GameRoom(room_id, bot_name)
+    room = GameRoom(room_id, bot_name, mode=mode)
     if user_id:
         room.session_user_id = _normalize_user_id(user_id)
     rooms[room_id] = room
-    return {"room_id": room_id, "bot": bot_name}
+    return {"room_id": room_id, "bot": bot_name, "mode": mode}
 
 
 @app.get("/rooms/{room_id}")
@@ -607,9 +668,13 @@ def get_room(room_id: str):
     room = rooms.get(room_id)
     if room is None:
         return {"error": "Room not found"}
+    mode = None
+    if isinstance(room.bot, AcademicBeastBot):
+        mode = room.bot.mode
     return {
         "room_id": room.room_id,
         "bot": room.bot_name,
+        "mode": mode,
         "started": room.gamestarted,
         "game_over": room.game.game_over,
     }
