@@ -503,3 +503,70 @@ class TestR3PrevBluffMeanPersistence:
             assert abs(loaded._prev_bluff_mean - 0.42) < 1e-9
         finally:
             os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# P3: Persistent Proof Curve Harness
+# ---------------------------------------------------------------------------
+
+class TestPersistentProofCurve:
+    """P3: Proof-curve harness produces valid results."""
+
+    def test_proof_curve_runs_and_saves(self):
+        """Smoke test: run 2 games per shift × 8 personas = 16 total, verify output."""
+        from analysis.persistent_proof_curve import run_proof_curve, PROOF_CURVE_PERSONAS
+        result = run_proof_curve(
+            games_per_shift=2,
+            max_turns_per_game=60,
+            seed=99,
+            verbose=False,
+        )
+        assert result["total_games"] == 2 * len(PROOF_CURVE_PERSONAS)
+        assert result["wins"] + result["losses"] + result["draws"] == result["total_games"]
+        assert 0.0 <= result["win_rate"] <= 1.0
+        # accumulated_info should be > 0 after mark_session_completed calls
+        assert result["accumulated_info_delta"] >= 0.0
+
+    def test_proof_curve_persona_shifts(self):
+        """Verify persona names appear in game_log after shifts."""
+        from analysis.persistent_proof_curve import run_proof_curve
+        result = run_proof_curve(
+            games_per_shift=3,
+            max_turns_per_game=60,
+            seed=42,
+            verbose=False,
+        )
+        # First 3 games: Honest_Rock, next 3: Hyper_Maniac
+        personas_seen = [g["persona"] for g in result["game_log"]]
+        assert personas_seen[0] == "Honest_Rock"
+        assert personas_seen[3] == "Hyper_Maniac"
+
+    def test_proof_curve_file_output(self):
+        """Verify JSON output file is created."""
+        import os, json
+        from analysis.persistent_proof_curve import run_proof_curve
+        result = run_proof_curve(
+            games_per_shift=2,
+            max_turns_per_game=60,
+            seed=77,
+            verbose=False,
+        )
+        assert os.path.exists("data/persistent_proof_curve.json")
+        with open("data/persistent_proof_curve.json") as f:
+            data = json.load(f)
+        assert data["total_games"] == result["total_games"]
+
+    def test_proof_curve_wilson_ci_bounds(self):
+        """Wilson CIs should be valid probability bounds."""
+        from analysis.persistent_proof_curve import run_proof_curve
+        result = run_proof_curve(
+            games_per_shift=2,
+            max_turns_per_game=60,
+            seed=42,
+            verbose=False,
+        )
+        ci = result["wilson_95ci"]
+        assert 0.0 <= ci[0] <= ci[1] <= 1.0
+        # Early/late phase CIs
+        assert 0.0 <= result["early_phase"]["wilson_95ci"][0]
+        assert result["early_phase"]["wilson_95ci"][1] <= 1.0
