@@ -44,3 +44,10 @@ nn/checkpoints/
 
 # Deepwork local state (git-local, OpenCode-readable)
 .slim/deepwork/
+
+# Generated experiment outputs (regenerable via scripts; don't commit)
+data/*.json
+data/*.jsonl
+data/experiments/
+tests/e2e/screenshots/
+.pytest_cache/
