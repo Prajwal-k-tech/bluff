@@ -161,6 +161,17 @@ def play_bot_vs_bot(bot_a: BotInterface, bot_b: BotInterface,
     return game.winner if game.game_over else -1
 
 
+def seed_tournament_rngs(seed: int) -> None:
+    """Seed the random sources used by the tournament and stochastic bots."""
+    random.seed(seed)
+    try:
+        import torch
+    except (ImportError, OSError):
+        # Rule-based and fallback bots only use Python's random module.
+        return
+    torch.manual_seed(seed)
+
+
 def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
                    checkpoint: Optional[str] = None,
                    seed: Optional[int] = None,
@@ -170,14 +181,14 @@ def run_tournament(num_games: int = 20, log_path: Optional[str] = None,
     Args:
         checkpoint: if given, PureNNBot loads this checkpoint instead of its
             default (avoids silent random-fallback when final.pt is missing).
-        seed: if given, seeds Python's `random` (deck shuffles, RandomBot,
-            Bayesian bluff draws, PureNN fallback). Tournament path never
-            samples torch (PureNN decides deterministically), so this covers
-            all stochasticity in the harness.
+        seed: if given, seeds Python's `random` and PyTorch's generators. This
+            covers the harness and the stochastic Hybrid/AcademicBeast policies
+            when a compatible checkpoint is loaded. Reproducibility still
+            depends on using the same code, checkpoint, and dependency versions.
         include_beast: if True, includes AcademicBeastBot in the tournament.
     """
     if seed is not None:
-        random.seed(seed)
+        seed_tournament_rngs(seed)
     bots = {
         "Random": RandomBot,
         "Honest": HonestBot,
@@ -288,8 +299,8 @@ def main():
                              "PureNNBot uses its default final.pt and falls "
                              "back to random play if missing.")
     parser.add_argument("--seed", type=int, default=None,
-                        help="Seed Python RNG for reproducible tournaments "
-                             "(deck shuffles + rule-bot draws).")
+                        help="Seed Python and PyTorch RNGs for repeatable "
+                             "tournaments in the same environment.")
     parser.add_argument("--include-beast", action="store_true",
                         help="Include AcademicBeastBot (Dewey EV + Southey) in the tournament.")
     args = parser.parse_args()
