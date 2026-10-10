@@ -132,7 +132,9 @@ const Waves: React.FC<WavesProps> = ({
   const boundingRef = useRef<{ width: number; height: number; left: number; top: number }>({
     width: 0, height: 0, left: 0, top: 0,
   });
-  const noiseRef = useRef(new Noise(Math.random()));
+  // Fixed seed keeps render initialization pure and makes the background
+  // deterministic across hydration and development re-renders.
+  const noiseRef = useRef(new Noise(0.37));
   const linesRef = useRef<Point[][]>([]);
   const mouseRef = useRef<Mouse>({
     x: -10, y: 0, lx: 0, ly: 0, sx: 0, sy: 0, v: 0, vs: 0, a: 0, set: false,

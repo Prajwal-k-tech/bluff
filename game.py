@@ -1,8 +1,39 @@
 """Game state and turn logic for 2-player Bluff."""
 
+import os
 import random
 from typing import List, Optional, Tuple
 from cards import Card, Deck, Hand, Rank
+
+# LOCKED rule (game-rules.md §4/§6): the round limit. A game with no winner
+# after this many turns is a DRAW (`winner is None`), not a forfeit. This is a
+# load-bearing constant: it is the cap that makes the structural draw-lock
+# terminate, and it is the reason the paper reports W-L-D and decisive-game
+# win rates rather than bare win rates. Named (rather than a bare 100) so the
+# rule is importable and testable.
+MAX_TURNS = 100
+RULESET_ID = "bluff-aces-first-v1"
+
+# ADR-036 (2026-09-28): is the play that empties a hand still challengeable?
+#
+# Corrected rule (default True): the emptying play is resolved like any other —
+# the responder may challenge it, and only then is the win awarded. A player
+# caught lying on the final play takes the pile back and the game continues.
+# This matches standard Cheat/Bluff and the flow in `game-rules.md` §4
+# (`RESOLVE ACTION` → `CHECK WIN`).
+#
+# Legacy rule (True→False, or env BLUFF_LEGACY_TERMINAL_WIN=1): the emptying
+# play wins instantly and *cannot* be challenged. That is a dominant-strategy
+# loophole — a player with ≤4 cards can dump anything, claiming any rank, for a
+# guaranteed win (measured: `experiments/terminal_rush.py` beat the flagship
+# bot 78-2 and every archetype, 750W-6L-324D overall, while claiming a rank it
+# held zero of). It also contradicts the docs and lets a human win the website
+# game unopposed. The flag exists so historical benchmark numbers can still be
+# reproduced; new work must run under the corrected rule.
+TERMINAL_PLAY_CHALLENGEABLE = (
+    os.environ.get("BLUFF_LEGACY_TERMINAL_WIN", "").strip().lower()
+    not in ("1", "true", "yes", "on")
+)
 
 
 class Action:
@@ -18,6 +49,9 @@ class Action:
         self.bluff_called = bluff_called    # did opponent call?
         self.caller_was_right = caller_was_right  # was the call correct?
         self.pile_size_before = pile_size_before
+        # Publicly observable response metadata; None denotes legacy/unknown.
+        self.response_was_call: Optional[bool] = None
+        self.response_was_forced: Optional[bool] = None
 
     def __repr__(self) -> str:
         cards_str = ", ".join(str(c) for c in self.cards_played)
@@ -41,6 +75,9 @@ class GameState:
         self.winner: Optional[int] = None
         self.actions: List[Action] = []  # full game history
         self.cards_played: List[Card] = []  # all cards that left hands (for card counting)
+        # ADR-036: a player who has just emptied their hand, whose win is
+        # deferred until the responder challenges or declines.
+        self._pending_win: Optional[int] = None
 
     def deal(self, cards_per_player: int = 14, random_start: bool = True):
         """Deal cards to all players. Remaining cards form the draw pile.
@@ -84,6 +121,8 @@ class GameState:
             return False, "Must play at least 1 card."
         if len(cards) > 4:
             return False, "Cannot play more than 4 cards."
+        if not self.actions and claimed_rank != Rank.ACE:
+            return False, "The first claim must be Aces."
 
         # Remove cards from hand
         if not self.hands[player].remove(cards):
@@ -108,8 +147,16 @@ class GameState:
         )
         self.actions.append(action)
 
-        # Check if player emptied hand
+        # Player emptied their hand. Under the corrected rule (ADR-036) the
+        # win is *deferred* so the responder can still challenge this final
+        # play; see `_resolve_pending_win`.
         if not self.hands[player].has_cards():
+            if TERMINAL_PLAY_CHALLENGEABLE:
+                self._pending_win = player
+                return True, (f"Played {len(cards)} card(s) as "
+                              f"{claimed_rank.display()} — hand empty, "
+                              f"awaiting challenge.")
+            # Legacy loophole, kept only for reproducing old benchmarks.
             self.game_over = True
             self.winner = player
             return True, f"Player {player} wins! Hand is empty."
@@ -127,7 +174,8 @@ class GameState:
         if not self.actions:
             return False
         last_action = self.actions[-1]
-        return not last_action.bluff_called
+        return (not last_action.bluff_called
+                and last_action.player == self.current_player)
 
     def call_bluff(self, caller: int) -> Tuple[bool, str, Optional[Action]]:
         """
@@ -144,7 +192,11 @@ class GameState:
         last_action = self.actions[-1]
         if last_action.bluff_called:
             return False, "Bluff already called on this play.", None
+        if caller == last_action.player:
+            return False, "You can't call bluff on your own play.", None
 
+        last_action.response_was_call = True
+        last_action.response_was_forced = not bool(self.draw_pile)
         last_action.bluff_called = True
         last_action.caller_was_right = last_action.was_bluff
 
@@ -166,6 +218,7 @@ class GameState:
                          f"Player {caller} takes {len(self.pile)} cards.")
 
         self.pile.clear()
+        self._resolve_pending_win()
         self._next_turn()
 
         return True, result_msg, last_action
@@ -183,28 +236,47 @@ class GameState:
             return False, "Game is over."
         if not self.actions:
             return False, "Nothing to pass on."
+        if not self.draw_pile:
+            return False, "Draw pile is empty. You must call bluff."
 
         last_action = self.actions[-1]
         if last_action.bluff_called:
             return False, "Bluff already called."
 
+        last_action.response_was_call = False
+        last_action.response_was_forced = False
         # Draw 1 card from draw pile (to the passer, not necessarily current)
         target = passer if passer is not None else self.current_player
-        if len(self.draw_pile) > 0:
-            drawn = self.draw_pile.pop(0)
-            self.hands[target].add([drawn])
-            msg = f"Passed. Drew 1 card ({drawn})."
-        else:
-            msg = "Passed. Draw pile empty, no card drawn."
+        drawn = self.draw_pile.pop(0)
+        self.hands[target].add([drawn])
+        msg = f"Passed. Drew 1 card ({drawn})."
 
+        # Declining to challenge a hand-emptying play concedes the game.
+        self._resolve_pending_win()
         self._next_turn()
         return True, msg
+
+    def _resolve_pending_win(self) -> None:
+        """Settle a deferred hand-emptying win once the challenge has resolved.
+
+        ADR-036. Called at the end of `call_bluff` and `pass_turn` — i.e. after
+        the responder has either challenged (cards revealed, pile transferred)
+        or declined. If the player who went out is *still* empty they win; a
+        successful challenge means they took the pile back and play continues.
+        """
+        player = getattr(self, "_pending_win", None)
+        if player is None:
+            return
+        self._pending_win = None
+        if not self.hands[player].has_cards():
+            self.game_over = True
+            self.winner = player
 
     def _next_turn(self):
         self.current_player = (self.current_player + 1) % self.num_players
         self.turn_count += 1
-        # §4/§6: Round limit — game is a draw if no winner after 100 turns
-        if self.turn_count >= 100:
+        # §4/§6: Round limit — game is a draw if no winner after MAX_TURNS
+        if self.turn_count >= MAX_TURNS:
             self.game_over = True
             # winner stays None → draw
 

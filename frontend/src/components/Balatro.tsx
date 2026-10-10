@@ -115,13 +115,15 @@ void main() {
 }
 `;
 
+const DEFAULT_OFFSET: [number, number] = [0.0, 0.0];
+
 export default function Balatro({
   spinRotation = -2.0,
   spinSpeed = 7.0,
-  offset = [0.0, 0.0],
-  color1 = "#fab387",
-  color2 = "#1e1e2e",
-  color3 = "#11111b",
+  offset = DEFAULT_OFFSET,
+  color1 = "#dfc184",
+  color2 = "#1c1722",
+  color3 = "#0d0a12",
   contrast = 3.5,
   lighting = 0.4,
   spinAmount = 0.25,
@@ -135,10 +137,13 @@ export default function Balatro({
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const mountedContainer = containerRef.current as
+      (HTMLDivElement & { _cleanup?: () => void });
 
     let program: InstanceType<typeof import("ogl").Program>;
     let animationFrameId: number;
     let disposed = false;
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     // Dynamic import to avoid SSR issues with WebGL
     import("ogl").then(({ Renderer, Program, Mesh, Triangle }) => {
@@ -189,17 +194,27 @@ export default function Balatro({
 
       const mesh = new Mesh(gl, { geometry, program });
 
-      function update(time: number) {
-        animationFrameId = requestAnimationFrame(update);
+      function render(time: number) {
         program.uniforms.iTime.value = time * 0.001;
         renderer.render({ scene: mesh });
       }
-      animationFrameId = requestAnimationFrame(update);
+      function update(time: number) {
+        render(time);
+        if (!motionPreference.matches) animationFrameId = requestAnimationFrame(update);
+      }
+      function updateMotionPreference() {
+        cancelAnimationFrame(animationFrameId);
+        if (motionPreference.matches) render(0);
+        else animationFrameId = requestAnimationFrame(update);
+      }
+      motionPreference.addEventListener("change", updateMotionPreference);
+      if (motionPreference.matches) render(0);
+      else animationFrameId = requestAnimationFrame(update);
       const canvas = gl.canvas;
       container.appendChild(canvas);
 
       function handleMouseMove(e: MouseEvent) {
-        if (!mouseInteraction || !container) return;
+        if (!mouseInteraction || motionPreference.matches || !container) return;
         const rect = container.getBoundingClientRect();
         const x = (e.clientX - rect.left) / rect.width;
         const y = 1.0 - (e.clientY - rect.top) / rect.height;
@@ -210,6 +225,7 @@ export default function Balatro({
       const cleanup = () => {
         cancelAnimationFrame(animationFrameId);
         window.removeEventListener("resize", resize);
+        motionPreference.removeEventListener("change", updateMotionPreference);
         container.removeEventListener("mousemove", handleMouseMove);
         if (canvas.parentElement === container) {
           container.removeChild(canvas);
@@ -224,8 +240,7 @@ export default function Balatro({
 
     return () => {
       disposed = true;
-      const el = containerRef.current as (HTMLDivElement & { _cleanup?: () => void }) | null;
-      el?._cleanup?.();
+      mountedContainer._cleanup?.();
     };
   }, [
     spinRotation, spinSpeed, offset, color1, color2, color3,

@@ -1,29 +1,32 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
-import { motion, AnimatePresence } from "motion/react";
-import { AlertTriangle, Bot, Play, ScrollText, X, BookOpen, ExternalLink, LogOut } from "lucide-react";
+import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import Balatro from "@/components/Balatro";
 import RulesModal from "@/components/RulesModal";
+import ProfileMemorySettings from "@/components/PrivacyPreferencesModal";
 import { useGameSounds } from "@/hooks/useGameSounds";
 
-
-function GithubIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
-  return (
-    <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
-    </svg>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Env config
 // ---------------------------------------------------------------------------
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const WS_URL = API_URL.replace(/^http/, "ws");
+const API_URL = process.env.NEXT_PUBLIC_API_URL === "same-origin"
+  ? "/api"
+  : process.env.NEXT_PUBLIC_API_URL || "http://localhost:8768";
+const LOCAL_HISTORY_PREFIX = "bluff-public-history:v1:";
+
+function getWebSocketUrl(path: string) {
+  const url = new URL(`${API_URL}${path}`, window.location.origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+function createHistoryId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 // ---------------------------------------------------------------------------
 // Game layout wrapper
@@ -34,36 +37,39 @@ function GameLayout({
   username,
   onLogout,
   onOpenRules,
+  onOpenPrivacy,
   showNav = true,
 }: {
   children: React.ReactNode;
   username: string;
   onLogout: () => void;
   onOpenRules?: () => void;
+  onOpenPrivacy: () => void;
   showNav?: boolean;
 }) {
 
   return (
-    <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-ctp-base">
+    <MotionConfig reducedMotion="user">
+    <div className="relative flex h-dvh w-full flex-col overflow-hidden bg-ctp-base">
       {/* Full-page Balatro shader background */}
-      <div className="absolute inset-0 pointer-events-none opacity-25">
+      <div className="pointer-events-none absolute inset-0 opacity-25" aria-hidden="true">
         <Balatro
-          color1="#fab387"
-          color2="#1e1e2e"
-          color3="#11111b"
-          spinSpeed={3.0}
+          color1="#c6a4e4"
+          color2="#1c1722"
+          color3="#0d0a12"
+          spinSpeed={0.18}
           contrast={2.5}
           lighting={0.35}
           spinAmount={0.22}
           mouseInteraction={true}
         />
       </div>
-      <div className="absolute inset-0 pointer-events-none bg-ctp-base/60" />
+      <div className="pointer-events-none ambient-scrim absolute inset-0" aria-hidden="true" />
 
       {/* Header */}
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-ctp-surface1/60 bg-ctp-crust/80 px-4 z-20 backdrop-blur-md">
+      <header className="z-20 flex h-14 shrink-0 items-center justify-between border-b border-ctp-surface1/70 bg-ctp-crust/90 px-3 backdrop-blur-xl sm:px-6">
         <div className="flex items-center gap-3">
-          <span className="font-[family-name:var(--font-petit-formal-script)] text-[22px] font-bold text-ctp-peach tracking-wider">
+          <span className="editorial-display text-3xl leading-none text-ctp-peach">
             Bluff
           </span>
         </div>
@@ -72,42 +78,48 @@ function GameLayout({
             <div className="flex items-center gap-1">
               <button
                 onClick={onOpenRules}
-                className="flex items-center gap-1.5 px-2 py-1.5 text-[12px] font-medium text-ctp-subtext0 transition-colors hover:text-ctp-peach"
+                aria-label="Rules"
+                className="flex min-h-11 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ctp-subtext0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-peach"
               >
 
-                <BookOpen className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Rules</span>
+                <span>Rules</span>
+              </button>
+              <button
+                onClick={onOpenPrivacy}
+                title="Data and learning preferences"
+                className="min-h-11 rounded-full px-3 text-xs font-medium text-ctp-subtext0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-peach"
+              >
+                Data
               </button>
               <a
                 href="https://github.com/oGhostyyy/Bluff"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 text-[12px] font-medium text-ctp-subtext0 transition-colors hover:text-ctp-peach"
+                className="hidden min-h-11 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ctp-subtext0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-peach sm:flex"
               >
-                <GithubIcon className="h-3.5 w-3.5" />
                 <span>Repo</span>
               </a>
               <a
                 href="https://linktr.ee/oGhostyyy"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hidden sm:flex items-center gap-1.5 px-2 py-1.5 text-[12px] font-medium text-ctp-subtext0 transition-colors hover:text-ctp-peach"
+                className="hidden min-h-11 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ctp-subtext0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-peach sm:flex"
               >
-                <ExternalLink className="h-3.5 w-3.5" />
                 <span>Linktree</span>
               </a>
             </div>
           )}
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-semibold text-ctp-peach max-w-[100px] truncate">
+            <span className="max-w-[64px] truncate text-xs font-semibold text-ctp-peach sm:max-w-[100px]">
               {username}
             </span>
             <button
               onClick={onLogout}
-              title="Leave Game"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-ctp-surface1 bg-ctp-surface0/50 text-ctp-overlay0 transition-colors hover:border-ctp-red/50 hover:bg-ctp-red/10 hover:text-ctp-red"
+              title="Leave game"
+              className="min-h-11 rounded-full border border-ctp-surface1 bg-ctp-surface0/70 px-3 text-xs text-ctp-subtext0 transition-colors hover:border-ctp-red/50 hover:bg-ctp-red/10 hover:text-ctp-red"
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <span className="sm:hidden">Leave</span>
+              <span className="hidden sm:inline">Leave game</span>
             </button>
           </div>
         </div>
@@ -115,6 +127,7 @@ function GameLayout({
 
       {children}
     </div>
+    </MotionConfig>
   );
 }
 
@@ -124,60 +137,28 @@ function GameLayout({
 
 const BOT_OPTIONS = [
   {
-    id: "random",
-    name: "Beginner",
-    bot: "Random",
-    difficulty: 1,
-    description: "Random moves — easy win",
-    dotColor: "bg-ctp-green",
+    id: "flagship",
+    name: "Pranjol",
+    role: "Adaptive Flagship",
+    description: "Tracks your calls and revealed bluffs within this room, including rematches. Cross-game guest memory is used only when enabled in Data and confirmed by the server.",
+  },
+  {
+    id: "math",
+    name: "Sanja",
+    role: "Math baseline",
+    description: "Uses approximate card-count beliefs and short-horizon card-advantage estimates. Assumes a 30% bluff prior and a 35% call prior. Not optimal and not fitted to human data.",
   },
   {
     id: "honest",
-    name: "Easy",
-    bot: "Honest",
-    difficulty: 2,
-    description: "Never bluffs — learnable",
-    dotColor: "bg-ctp-yellow",
+    name: "Sudhnashu",
+    role: "Honest baseline",
+    description: "Never bluffs. Calls only when card knowledge proves a bluff; otherwise plays truthfully or passes.",
   },
   {
-    id: "cardcount",
-    name: "Medium",
-    bot: "CardCount",
-    difficulty: 3,
-    description: "Mathematical play — challenging",
-    dotColor: "bg-ctp-peach",
-  },
-  {
-    id: "bayesian",
-    name: "Hard",
-    bot: "Bayesian",
-    difficulty: 4,
-    description: "Learns your patterns — tough",
-    dotColor: "bg-ctp-red",
-  },
-  {
-    id: "purenn",
-    name: "Expert",
-    bot: "PureNN",
-    difficulty: 5,
-    description: "Deep RL policy — high skill",
-    dotColor: "bg-ctp-mauve",
-  },
-  {
-    id: "hybrid",
-    name: "Master",
-    bot: "Hybrid",
-    difficulty: 6,
-    description: "NN + Bayesian adaptation — supreme",
-    dotColor: "bg-ctp-sapphire",
-  },
-  {
-    id: "beast",
-    name: "Grandmaster",
-    bot: "AcademicBeast",
-    difficulty: 7,
-    description: "TD-MoE + Archetype Classifier + Dewey EV — ultimate",
-    dotColor: "bg-ctp-lavender",
+    id: "random",
+    name: "Tanmoy",
+    role: "Random baseline",
+    description: "Chooses among legal actions at random.",
   },
 ] as const;
 
@@ -187,55 +168,50 @@ function BotSelector({
   onSelect: (botId: string) => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-8 py-12">
+    <div className="flex w-full flex-col items-center gap-9 py-9 sm:py-12">
       <motion.div
-        className="text-center"
+        className="px-5 text-center"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h2 className="font-[family-name:var(--font-petit-formal-script)] text-[36px] text-ctp-peach">
-          Choose Your Opponent
-        </h2>
-        <p className="mt-2 text-[13px] text-ctp-subtext0">
-          Select a bot difficulty to begin
+        <h1 className="editorial-display-tight text-5xl leading-[0.98] text-ctp-text sm:text-6xl">
+          Choose your opponent
+        </h1>
+        <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-ctp-subtext0">
+          One adaptive opponent and three baselines.
         </p>
       </motion.div>
 
-      <div className="grid grid-cols-2 gap-3 max-w-[500px] w-full px-4">
+      <div className="grid w-full max-w-6xl grid-cols-1 gap-4 px-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
         {BOT_OPTIONS.map((bot, i) => (
           <motion.button
             key={bot.id}
             onClick={() => onSelect(bot.id)}
-            className="group relative rounded-xl border border-ctp-surface1/60 bg-ctp-surface0/40 p-5 text-left transition-all duration-200 hover:border-ctp-peach/40 hover:bg-ctp-surface0/60 hover:shadow-[0_4px_20px_rgba(250,179,135,0.08)]"
+            className={`bot-choice group relative cursor-pointer rounded-2xl border p-5 text-left hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ctp-peach ${
+              bot.id === "flagship"
+                ? "bot-choice-featured marble-panel sm:col-span-2 sm:p-7 xl:col-span-3"
+                : "surface-card"
+            }`}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.1 + i * 0.08 }}
           >
-            {/* Difficulty dots */}
-            <div className="mb-3 flex gap-1">
-              {Array.from({ length: 4 }).map((_, j) => (
-                <div
-                  key={j}
-                  className={[
-                    "h-1.5 w-1.5 rounded-full transition-colors",
-                    j < bot.difficulty
-                      ? bot.dotColor
-                      : "bg-ctp-surface2",
-                  ].join(" ")}
-                />
-              ))}
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <p className={`eyebrow ${bot.id === "flagship" ? "text-ctp-peach" : "text-ctp-lavender"}`}>
+                {bot.role}
+              </p>
             </div>
-
-            <p className="text-[15px] font-semibold text-ctp-text group-hover:text-ctp-peach transition-colors">
-              {bot.name}
-            </p>
-            <p className="mt-0.5 text-[11px] text-ctp-overlay0">
-              {bot.bot} Bot
-            </p>
-            <p className="mt-2 text-[12px] text-ctp-subtext0 leading-relaxed">
-              {bot.description}
-            </p>
+            <div className="flex min-w-0 flex-1 items-start sm:items-center">
+              <div className={`min-w-0 flex-1 ${bot.id === "flagship" ? "max-w-3xl" : ""}`}>
+                <p className="bot-choice-title text-ctp-text">
+                  {bot.name}
+                </p>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-ctp-subtext1">
+                  {bot.description}
+                </p>
+              </div>
+            </div>
           </motion.button>
         ))}
       </div>
@@ -263,6 +239,13 @@ type Rank =
   | "K"
   | "A";
 
+const SUIT_LABELS: Record<Suit, string> = {
+  "♠": "spades",
+  "♥": "hearts",
+  "♦": "diamonds",
+  "♣": "clubs",
+};
+
 interface CardData {
   suit: Suit;
   rank: Rank;
@@ -278,16 +261,39 @@ interface GameOverResult {
   humanWon: boolean;
   isDraw: boolean;
   message: string;
-  adaptation: BotAdaptation | null;
 }
 
 interface BotAdaptation {
-  estimated_bluff_rate: number;
-  estimated_call_frequency: number;
-  actions_observed: number;
-  model_loaded: boolean;
-  inferred_archetype?: string;
-  archetype_confidence?: number;
+  scope?: string;
+  profile_status?: string;
+  persistent_profiles_available?: boolean;
+  research_logging?: boolean;
+  log_status?: string;
+}
+
+function guestStatusText(adaptation: BotAdaptation) {
+  const profileStatus = adaptation.profile_status ?? "unavailable";
+  const profile = profileStatus === "saved"
+    ? "Guest profile status: saved by the server."
+    : profileStatus === "save_failed"
+      ? "Guest profile status: save failed."
+      : profileStatus === "not_consented"
+        ? "Guest profile status: not saved because consent is off."
+        : profileStatus === "unavailable"
+          ? "Guest profile status: unavailable."
+          : `Guest profile status: ${profileStatus}.`;
+  const research = adaptation.log_status === "recording"
+    ? "Research log status: recording."
+    : adaptation.log_status === "saved"
+      ? "Research log status: saved by the server."
+      : adaptation.log_status === "not_consented"
+        ? "Research log status: not saved because consent is off."
+        : adaptation.log_status === "save_failed"
+          ? "Research log status: save failed."
+          : adaptation.log_status === "unavailable"
+            ? "Research log status: unavailable."
+            : `Research log status: ${adaptation.log_status ?? "not reported"}.`;
+  return `${profile} ${research}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,8 +370,8 @@ function PlayingCard({
         ].join(" ")}
         style={{
           backgroundImage: `
-            repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(250,179,135,0.06) 4px, rgba(250,179,135,0.06) 5px),
-            repeating-linear-gradient(-45deg, transparent, transparent 4px, rgba(250,179,135,0.06) 4px, rgba(250,179,135,0.06) 5px)
+            repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(223,193,132,0.06) 4px, rgba(223,193,132,0.06) 5px),
+            repeating-linear-gradient(-45deg, transparent, transparent 4px, rgba(223,193,132,0.06) 4px, rgba(223,193,132,0.06) 5px)
           `,
         }}
       >
@@ -379,23 +385,24 @@ function PlayingCard({
   }
 
   const red = RED_SUITS.has(card.suit);
-  const color = red ? "text-ctp-red" : "text-ctp-text";
 
   return (
-    <div
-      className={[
-        "rounded-lg border bg-ctp-surface0 transition-shadow duration-200",
-        isSmall ? "h-[56px] w-[40px]" : "h-[126px] w-[90px] max-md:h-[91px] max-md:w-[65px]",
-        selected
-          ? "border-ctp-peach shadow-[0_0_20px_rgba(250,179,135,0.25),0_8px_24px_rgba(250,179,135,0.15)]"
-          : "border-ctp-surface1",
-        onClick && "cursor-pointer",
-      ].join(" ")}
+    <button
+      type="button"
+      aria-label={`${card.rank} of ${SUIT_LABELS[card.suit]}${selected ? ", selected" : ""}`}
+      aria-pressed={selected}
       onClick={onClick}
+      className={[
+        "playing-card-face rounded-lg border transition-transform duration-200",
+        isSmall ? "h-[56px] w-[40px]" : "h-[126px] w-[90px] max-md:h-[91px] max-md:w-[65px]",
+        red ? "card-red" : "card-ink",
+        selected ? "is-selected" : "",
+        "cursor-pointer",
+      ].join(" ")}
     >
       <div className="flex h-full flex-col justify-between p-1.5">
         {/* top-left corner */}
-        <div className={`flex flex-col items-center leading-none ${color}`}>
+        <div className="flex flex-col items-center leading-none">
           <span className={isSmall ? "text-[9px]" : "max-md:text-[10px] text-[13px]"}>
             {card.rank}
           </span>
@@ -405,14 +412,14 @@ function PlayingCard({
         </div>
 
         {/* center suit */}
-        <div className={`flex items-center justify-center ${color}`}>
+        <div className="flex items-center justify-center">
           <span className={isSmall ? "text-[16px]" : "max-md:text-[22px] text-[30px]"}>
             {card.suit}
           </span>
         </div>
 
         {/* bottom-right corner (inverted) */}
-        <div className={`flex flex-col items-center leading-none rotate-180 ${color}`}>
+        <div className="flex flex-col items-center leading-none rotate-180">
           <span className={isSmall ? "text-[9px]" : "max-md:text-[10px] text-[13px]"}>
             {card.rank}
           </span>
@@ -421,7 +428,7 @@ function PlayingCard({
           </span>
         </div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -429,18 +436,16 @@ function PlayingCard({
 // OpponentArea (top ~20%)
 // ---------------------------------------------------------------------------
 
-function OpponentArea({ cardCount, botName, lastBy, lastCount, lastRank }: { cardCount: number; botName: string; lastBy?: string; lastCount?: number; lastRank?: string }) {
+function OpponentArea({ cardCount, botName, botRole, lastBy, lastCount, lastRank }: { cardCount: number; botName: string; botRole: string; lastBy?: string; lastCount?: number; lastRank?: string }) {
   const visibleCards = Math.min(cardCount, 7);
 
   return (
-    <div className="flex flex-col items-center gap-2 px-4 py-3 md:py-4">
+    <div className="opponent-stage flex flex-col items-center gap-2 px-4 py-3 md:py-4">
       {/* avatar + name */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-ctp-lavender bg-ctp-surface0">
-          <Bot className="h-5 w-5 text-ctp-lavender" />
-        </div>
         <div className="text-center sm:text-left">
-          <p className="text-[15px] font-medium text-ctp-lavender">{botName}</p>
+          <p className="game-bot-name leading-tight text-ctp-text">Bot ({botName})</p>
+          <p className="text-[11px] text-ctp-overlay1">{botRole}</p>
           <p
             className={`text-[13px] ${
               cardCount <= 5 ? "text-ctp-red" : "text-ctp-subtext0"
@@ -452,12 +457,12 @@ function OpponentArea({ cardCount, botName, lastBy, lastCount, lastRank }: { car
       </div>
 
       {/* fanned face-down cards */}
-      <div className="flex items-end pt-1">
+      <div className="opponent-card-fan flex items-end pt-1">
         {Array.from({ length: visibleCards }).map((_, i) => {
           const mid = (visibleCards - 1) / 2;
           const maxAngle = Math.min(20, visibleCards * 3);
           const rot = visibleCards > 1 ? (i - mid) * (maxAngle * 2) / (visibleCards - 1) : 0;
-          const archY = visibleCards > 1 ? 50 * (1 - Math.cos(((i - mid) / mid) * (Math.PI / 2))) : 0;
+          const archY = visibleCards > 1 ? 18 * (1 - Math.cos(((i - mid) / mid) * (Math.PI / 2))) : 0;
           return (
             <div
               key={i}
@@ -477,7 +482,7 @@ function OpponentArea({ cardCount, botName, lastBy, lastCount, lastRank }: { car
       </div>
 
       {/* last action */}
-      <p className="text-[12px] italic text-ctp-overlay0">
+      <p className="text-[13px] italic text-ctp-subtext0">
         {lastBy ? `${lastBy} played ${lastCount} card${lastCount !== 1 ? "s" : ""} as ${lastRank}` : "Awaiting first play"}
       </p>
     </div>
@@ -497,18 +502,20 @@ function CenterTable({
   claimedBy,
   playedCount,
   discardCount,
+  turnLabel,
 }: {
   round: number;
   playerCount: number;
   botCount: number;
   deckCount: number;
   claimedRank: Rank;
-  claimedBy: "You" | "Bot";
+  claimedBy: "You" | "Bot" | null;
   playedCount: number;
   discardCount: number;
+  turnLabel: string;
 }) {
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center gap-4 overflow-hidden px-4 py-2">
+    <div className="game-table-surface relative mx-3 my-2 flex min-h-[220px] w-[calc(100%-1.5rem)] max-w-6xl flex-1 flex-col items-center justify-center gap-2 self-center rounded-3xl border px-4 py-2">
 
 
       {/* radial glow overlay */}
@@ -516,49 +523,53 @@ function CenterTable({
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse at 50% 50%, rgba(250,179,135,0.06) 0%, transparent 70%)",
+            "radial-gradient(ellipse at 50% 50%, rgba(223,193,132,0.06) 0%, transparent 70%)",
         }}
       />
 
+      <p role="status" aria-live="polite" className="relative z-10 mb-2 text-sm font-semibold text-ctp-peach">
+        {turnLabel}
+      </p>
+
       {/* status bar */}
       <motion.div
-        className="relative z-10 flex items-center gap-2.5 rounded-full border border-ctp-surface1 bg-ctp-mantle px-5 py-2 text-[12px] sm:text-[13px] md:gap-3"
+        className="game-status-pill relative z-10 flex shrink-0 max-w-[calc(100vw-24px)] items-center gap-2 rounded-xl border px-3 py-2.5 text-xs shadow-lg sm:gap-3 sm:rounded-full sm:px-5 sm:text-sm md:gap-4"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, delay: 0.15 }}
       >
-        <span className="text-ctp-overlay1">Round {round}</span>
+        <span className="text-ctp-subtext0">Round {round}</span>
         <span className="h-3 w-px bg-ctp-surface2" />
         <span className="font-medium text-ctp-peach">You: {playerCount}</span>
         <span className="h-3 w-px bg-ctp-surface2" />
         <span className="font-medium text-ctp-lavender">Bot: {botCount}</span>
         <span className="h-3 w-px bg-ctp-surface2" />
-        <span className="text-ctp-overlay0">Deck: {deckCount}</span>
+        <span className="text-ctp-subtext0">Deck: {deckCount}</span>
       </motion.div>
 
       {/* claimed rank */}
       <motion.div
-        className="relative z-10 text-center"
+        className="relative z-10 shrink-0 text-center"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, delay: 0.25 }}
       >
         <p
-          className="font-[family-name:var(--font-petit-formal-script)] text-[32px] text-ctp-peach"
+          className="editorial-display text-4xl text-ctp-peach sm:text-5xl"
           style={{
-            textShadow: "0 0 30px rgba(250,179,135,0.15)",
+            textShadow: "0 0 30px rgba(223,193,132,0.15)",
           }}
         >
-          {RANK_LABELS[claimedRank]}
+          {claimedBy ? RANK_LABELS[claimedRank] : "Awaiting first play"}
         </p>
-        <p className="text-[13px] text-ctp-overlay1">
-          Claimed by {claimedBy}
+        <p className="text-sm text-ctp-subtext0">
+          {claimedBy ? `Claimed by ${claimedBy}` : "No cards played yet"}
         </p>
       </motion.div>
 
       {/* played cards fan */}
       <motion.div
-        className="relative z-10 flex items-end"
+        className="center-packet-visual relative z-10 flex shrink-0 items-end"
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.35 }}
@@ -569,13 +580,13 @@ function CenterTable({
           return (
             <div
               key={i}
-              className="-ml-[32px] first:ml-0"
+              className="-ml-[12px] first:ml-0"
               style={{
                 transform: `rotate(${rot}deg)`,
                 transformOrigin: "bottom center",
               }}
             >
-              <PlayingCard faceDown />
+              <PlayingCard faceDown size="small" />
             </div>
           );
         })}
@@ -583,7 +594,7 @@ function CenterTable({
 
       {/* discard pile */}
       <motion.div
-        className="relative z-10 flex items-center gap-3 pt-1"
+        className="relative z-10 flex shrink-0 items-center gap-3 pt-1"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.4, delay: 0.45 }}
@@ -603,8 +614,8 @@ function CenterTable({
             />
           ))}
         </div>
-        <span className="text-[11px] text-ctp-overlay0">
-          Discard: {discardCount} cards
+        <span className="text-xs text-ctp-subtext0">
+          Center pile: {discardCount} cards
         </span>
       </motion.div>
     </div>
@@ -620,12 +631,15 @@ function RankSelector({
   onSelect,
   onConfirm,
   onCancel,
+  activeRank,
 }: {
   selected: Rank | null;
   onSelect: (r: Rank) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  activeRank: Rank | null;
 }) {
+  const availableRanks = activeRank ? [activeRank] : RANKS;
   return (
     <motion.div
       className="flex flex-col items-center gap-3"
@@ -634,20 +648,20 @@ function RankSelector({
       exit={{ opacity: 0, y: 12 }}
       transition={{ duration: 0.25 }}
     >
-      <p className="text-[11px] font-medium uppercase tracking-[0.15em] text-ctp-overlay1">
-        Declare rank
+      <p className="text-xs font-medium uppercase tracking-[0.15em] text-ctp-subtext0">
+        {activeRank ? `Fixed round rank: ${activeRank}` : "Choose this round's rank"}
       </p>
 
       <div className="flex flex-wrap justify-center gap-1.5">
-        {RANKS.map((rank) => (
+        {availableRanks.map((rank) => (
           <button
             key={rank}
             onClick={() => onSelect(rank)}
             className={[
-              "flex h-[40px] w-[40px] items-center justify-center rounded-lg border text-[13px] font-medium transition-all duration-150",
-              "md:h-[44px] md:w-[44px]",
+              "flex h-11 w-11 items-center justify-center rounded-lg border text-sm font-medium transition-all duration-150",
+              "md:h-12 md:w-12",
               selected === rank
-                ? "border-ctp-peach bg-ctp-peach text-ctp-base shadow-[0_0_12px_rgba(250,179,135,0.2)]"
+                ? "border-ctp-peach bg-ctp-peach text-ctp-base shadow-[0_0_12px_rgba(223,193,132,0.2)]"
                 : "border-ctp-surface1 bg-ctp-surface0 text-ctp-text hover:border-ctp-overlay1 hover:bg-ctp-surface1",
             ].join(" ")}
           >
@@ -659,14 +673,14 @@ function RankSelector({
       <div className="flex items-center gap-2 pt-1">
         <button
           onClick={onCancel}
-          className="rounded-full border border-ctp-surface1 bg-transparent px-4 py-2 text-[13px] text-ctp-subtext0 transition-all hover:border-ctp-overlay1 hover:text-ctp-text"
+          className="min-h-11 rounded-full border border-ctp-surface1 bg-transparent px-4 py-2 text-[13px] text-ctp-subtext0 transition-all hover:border-ctp-overlay1 hover:text-ctp-text"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={!selected}
-          className="rounded-full bg-ctp-peach px-6 py-2 text-[13px] font-semibold text-ctp-base transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="button-primary min-h-11 rounded-full px-6 py-2 text-[13px] font-semibold"
         >
           Confirm Play
         </button>
@@ -691,8 +705,10 @@ function PlayerHand({
   onCancelPlay,
   onCallBluff,
   onPass,
+  canPlay,
   canPass,
   canCallBluff,
+  activeRank,
 }: {
   hand: CardData[];
   selected: Set<number>;
@@ -705,88 +721,91 @@ function PlayerHand({
   onCancelPlay: () => void;
   onCallBluff: () => void;
   onPass: () => void;
+  canPlay: boolean;
   canPass: boolean;
   canCallBluff: boolean;
+  activeRank: Rank | null;
 }) {
   const n = hand.length;
-  const mid = (n - 1) / 2;
-  // Calculate angle spread — wider for fewer cards, narrower for many
-  const maxAngle = Math.min(25, n * 3.5);
-  const angleStep = n > 1 ? (maxAngle * 2) / (n - 1) : 0;
-  // Arch lift in screen space (center highest, edges lowest)
-  const ARCH_HEIGHT = 70;
-  // Negative margin to overlap cards — tighter for more cards
-  const overlap = n > 6 ? "-ml-[26px] md:-ml-[32px]" : n > 3 ? "-ml-[20px] md:-ml-[26px]" : "-ml-[14px] md:-ml-[18px]";
 
   return (
-    <div className="flex flex-col items-center gap-3 px-4 pb-4 pt-2 md:pb-6">
-      {/* card fan */}
-      <div className="flex items-end justify-center">
-        {hand.map((card, i) => {
-          const rot = (i - mid) * angleStep;
-          const isSelected = selected.has(i);
-          // Arch: lift edges down in screen space so the fan reads as a clean arc
-          const archY = n > 1 ? ARCH_HEIGHT * (1 - Math.cos(((i - mid) / mid) * (Math.PI / 2))) : 0;
+    <div className="hand-dock-surface relative z-20 flex w-full min-w-0 flex-col items-center gap-3 border-t px-4 pb-4 pt-2 shadow-[0_-16px_40px_rgba(7,7,15,0.2)] backdrop-blur-xl md:pb-6">
+      {/* Flat row avoids transformed cards being clipped by the scroll area. */}
+      <div role="group" aria-label="Your hand" tabIndex={0} className="w-full max-w-full overflow-x-auto overscroll-x-contain pt-6 pb-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ctp-peach">
+        <div className="mx-auto flex w-max min-w-full items-end justify-center gap-2 px-6">
+          {hand.map((card, i) => {
+            const isSelected = selected.has(i);
 
-          return (
-            <div
-              key={i}
-              className={`${overlap} first:ml-0 relative`}
-              style={{
-                transform: `translateY(${archY}px)`,
-                transformOrigin: "bottom center",
-                zIndex: i,
-              }}
-            >
-              <div style={{ transform: `rotate(${rot}deg)`, transformOrigin: "bottom center" }}>
-                <div
-                  className="transition-transform duration-200 hover:-translate-y-2"
-                  style={{
-                    transform: isSelected ? "translateY(-20px)" : undefined,
-                  }}
-                >
-                  <PlayingCard
-                    card={card}
-                    selected={isSelected}
-                    onClick={() => onToggle(i)}
-                  />
+            return (
+              <div
+                key={i}
+                className="relative shrink-0"
+                style={{
+                  zIndex: isSelected ? n + 1 : i,
+                }}
+              >
+                <div>
+                  <div
+                    className="transition-transform duration-200 hover:-translate-y-2"
+                    style={{
+                      transform: isSelected ? "translateY(-20px)" : undefined,
+                    }}
+                  >
+                    <PlayingCard
+                      card={card}
+                      selected={isSelected}
+                      onClick={() => onToggle(i)}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* action buttons */}
-      <div className="flex items-center gap-3">
+      {canPlay && (
+        <p role="status" aria-live="polite" className="max-w-2xl text-center text-sm text-ctp-subtext0">
+          {selected.size === 0
+            ? "Your turn: choose Play, Call Bluff, or Pass when available. Select 1–4 cards to play."
+            : `${selected.size} card${selected.size === 1 ? "" : "s"} selected. Choose Play Cards to declare a rank.`}
+        </p>
+      )}
+      {canCallBluff && !canPlay && (
+        <p role="status" aria-live="polite" className="max-w-2xl text-center text-sm text-ctp-subtext0">
+          {canPass
+            ? "Choose to play, challenge the latest packet, or pass and draw 1 card."
+            : "Choose to play or challenge the latest packet."}
+        </p>
+      )}
+      <div className="flex w-full flex-wrap items-center justify-center gap-2.5 px-2 sm:gap-3">
         <button
           onClick={onOpenSelector}
-          disabled={(selected.size === 0 && !showSelector) || canCallBluff}
-          className="flex items-center gap-2 rounded-full bg-ctp-peach px-5 py-2.5 text-[14px] font-semibold text-ctp-base transition-all hover:brightness-110 hover:-translate-y-0.5 hover:shadow-[0_4px_16px_rgba(250,179,135,0.3)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+          disabled={(selected.size === 0 && !showSelector) || !canPlay}
+          className="button-primary flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold"
         >
-          <Play className="h-4 w-4" />
           Play Cards
         </button>
 
         <button
           onClick={onCallBluff}
           disabled={!canCallBluff}
-          className="flex items-center gap-2 rounded-full border-2 border-ctp-red px-5 py-2.5 text-[14px] font-semibold text-ctp-red transition-all hover:-translate-y-0.5 hover:bg-ctp-red/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+          className="button-danger flex min-h-11 items-center justify-center gap-2 rounded-full border-2 px-5 text-sm font-semibold"
         >
-          <AlertTriangle className="h-4 w-4" />
           Call Bluff!
         </button>
         <div className="relative group">
           <button
             onClick={onPass}
             disabled={!canPass}
-            className="flex items-center gap-2 rounded-full border border-ctp-surface1 bg-ctp-surface0/50 px-5 py-2.5 text-[14px] font-medium text-ctp-subtext0 transition-all hover:-translate-y-0.5 hover:border-ctp-overlay1 hover:text-ctp-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+            className="button-secondary flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-medium"
           >
             Pass
           </button>
-          {!canPass && (
+          {!canPass && canCallBluff && (
             <div className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-ctp-surface1/60 bg-ctp-mantle/95 px-2.5 py-1 text-[11px] text-ctp-overlay1 opacity-0 shadow-lg backdrop-blur-sm transition-opacity group-hover:opacity-100">
-              Draw pile empty — call bluff instead
+              Passing unavailable. Play or call bluff.
             </div>
           )}
         </div>
@@ -801,6 +820,7 @@ function PlayerHand({
             onSelect={onSelectRank}
             onConfirm={onConfirmPlay}
             onCancel={onCancelPlay}
+            activeRank={activeRank}
           />
         )}
       </AnimatePresence>
@@ -814,17 +834,19 @@ function PlayerHand({
 
 function GameOverOverlay({
   result,
+  adaptation,
   onPlayAgain,
 }: {
   result: GameOverResult;
+  adaptation: BotAdaptation | null;
   onPlayAgain: () => void;
 }) {
-  const { humanWon, isDraw, message, adaptation } = result;
+  const { humanWon, isDraw, message } = result;
 
   const headline = isDraw
     ? "Draw!"
     : humanWon
-      ? "You Won! 🎉"
+      ? "You Won!"
       : "Bot Wins!";
 
   const subColor = isDraw
@@ -834,10 +856,10 @@ function GameOverOverlay({
       : "text-ctp-red";
 
   const glowColor = isDraw
-    ? "shadow-[0_0_60px_rgba(249,226,175,0.12)]"
+    ? "shadow-[0_0_60px_rgba(234,210,147,0.12)]"
     : humanWon
-      ? "shadow-[0_0_60px_rgba(166,227,161,0.12)]"
-      : "shadow-[0_0_60px_rgba(243,139,168,0.12)]";
+      ? "shadow-[0_0_60px_rgba(159,190,161,0.12)]"
+      : "shadow-[0_0_60px_rgba(225,140,145,0.12)]";
 
   return (
     <motion.div
@@ -857,7 +879,7 @@ function GameOverOverlay({
         transition={{ type: "spring", damping: 22, stiffness: 260, delay: 0.05 }}
       >
         {/* result headline */}
-        <p className={`text-[32px] font-bold leading-tight ${subColor}`}>
+        <p className={`editorial-display text-4xl leading-tight ${subColor}`}>
           {headline}
         </p>
         <p className="mt-2 text-[13px] text-ctp-subtext0 leading-snug">
@@ -867,35 +889,10 @@ function GameOverOverlay({
         {/* bot adaptation summary if available */}
         {adaptation && (
           <div className="mt-4 rounded-xl border border-ctp-lavender/25 bg-ctp-surface0/60 p-3 text-left">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
-              AI Mental Model — Final State
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ctp-lavender">
+              Prototype data scope
             </p>
-            <div className="grid grid-cols-2 gap-2 text-[12px]">
-              <div>
-                <span className="text-[10px] text-ctp-overlay0 block">Est. Bluff Rate</span>
-                <span className="font-semibold text-ctp-peach">
-                  {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-ctp-overlay0 block">Est. Call Rate</span>
-                <span className="font-semibold text-ctp-teal">
-                  {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
-                </span>
-              </div>
-            </div>
-            {adaptation.inferred_archetype && (
-              <div className="mt-2 pt-1.5 border-t border-ctp-surface2/30 flex items-center justify-between text-[11px]">
-                <span className="text-ctp-overlay0">Inferred Archetype</span>
-                <span className="font-semibold text-ctp-lavender">
-                  {adaptation.inferred_archetype} ({((adaptation.archetype_confidence || 0) * 100).toFixed(0)}%)
-                </span>
-              </div>
-            )}
-            <p className="mt-1.5 text-[10px] text-ctp-overlay1">
-              Built from {adaptation.actions_observed} observed action{adaptation.actions_observed !== 1 ? "s" : ""}
-              {adaptation.model_loaded ? " · Saved to S3 memory" : ""}
-            </p>
+            <p className="text-xs text-ctp-subtext0">{guestStatusText(adaptation)}</p>
           </div>
         )}
 
@@ -918,7 +915,6 @@ function GameOverOverlay({
 function GameLogSidebar({
   open,
   collapsed,
-  onToggleCollapse,
   onClose,
   logs,
   adaptation,
@@ -926,7 +922,6 @@ function GameLogSidebar({
 
   open: boolean;
   collapsed: boolean;
-  onToggleCollapse: () => void;
   onClose: () => void;
   logs: LogEntry[];
   adaptation?: BotAdaptation | null;
@@ -935,64 +930,45 @@ function GameLogSidebar({
     <>
       {/* ── Desktop sidebar ── */}
       <motion.aside
-        className="hidden md:flex h-full shrink-0 flex-col border-l border-ctp-surface1/60 bg-ctp-crust/80 backdrop-blur-sm overflow-hidden"
+        className="game-log-surface hidden h-full shrink-0 flex-col overflow-hidden border-l border-ctp-surface1/70 backdrop-blur-xl md:flex"
         animate={{ width: collapsed ? 0 : 280, opacity: collapsed ? 0 : 1 }}
         transition={{ duration: 0.2, ease: "easeInOut" }}
       >
         <div className="flex items-center justify-between border-b border-ctp-surface1/60 px-4 py-3 w-[280px]">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ctp-overlay1">
-            Game Log
-          </p>
+          <div>
+            <p className="editorial-section-title text-ctp-text">Game log</p>
+            <p className="text-xs text-ctp-overlay1">Latest at the top</p>
+          </div>
           <button
             onClick={onClose}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-ctp-overlay0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-text"
+            aria-label="Close game log"
+            className="min-h-11 rounded-xl px-3 text-xs text-ctp-overlay0 transition-colors hover:bg-ctp-surface0 hover:text-ctp-text"
           >
-            <X className="h-3.5 w-3.5" />
+            Close
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3 w-[280px]">
           {adaptation && (
             <div className="mb-3 rounded-lg border border-ctp-lavender/30 bg-ctp-surface0/60 p-2.5 text-left">
-              <div className="flex items-center justify-between pb-1.5 border-b border-ctp-surface1/40">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
-                  AI Mental Model
+              <div className="pb-1.5 border-b border-ctp-surface1/40">
+                <span className="text-xs font-semibold uppercase tracking-wider text-ctp-lavender">
+                  Session memory
                 </span>
-                {adaptation.model_loaded && (
-                  <span className="rounded bg-ctp-green/20 px-1 py-0.5 text-[9px] font-medium text-ctp-green">
-                    S3 Memory
-                  </span>
-                )}
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <span className="text-[10px] text-ctp-overlay0 block">Estimated Bluff</span>
-                  <span className="font-semibold text-ctp-peach">
-                    {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-ctp-overlay0 block">Estimated Call</span>
-                  <span className="font-semibold text-ctp-teal">
-                    {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-              <div className="mt-1.5 text-[10px] text-ctp-overlay1">
-                Learned from {adaptation.actions_observed} action{adaptation.actions_observed !== 1 ? "s" : ""}
-              </div>
+              <p className="mt-2 text-xs text-ctp-subtext0">{guestStatusText(adaptation)}</p>
             </div>
           )}
 
           <div className="space-y-3">
             {logs.map((entry, i) => (
-              <div key={i}>
-                <span className="block text-[10px] text-ctp-overlay0">
+              <div key={i} className="game-log-entry">
+                <span className="block text-xs text-ctp-subtext0">
                   {entry.time}
                 </span>
                 <p
                   className={[
-                    "text-[12px] leading-snug",
+                    "text-sm leading-5",
                     entry.kind === "bluff"
                       ? "font-semibold text-ctp-red"
                       : entry.kind === "honest"
@@ -1028,21 +1004,23 @@ function GameLogSidebar({
 
             {/* panel */}
             <motion.aside
-              className="absolute right-0 top-0 flex h-full w-[280px] flex-col border-l border-ctp-surface1 bg-ctp-surface0"
+              className="game-log-surface absolute right-0 top-14 flex h-[calc(100dvh-3.5rem)] w-[280px] flex-col border-l border-ctp-surface1"
               initial={{ x: 280 }}
               animate={{ x: 0 }}
               exit={{ x: 280 }}
               transition={{ type: "spring", damping: 28, stiffness: 320 }}
             >
               <div className="flex items-center justify-between border-b border-ctp-surface1 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ctp-overlay1">
-                  Game Log
-                </p>
+                <div>
+                  <p className="editorial-section-title text-ctp-text">Game log</p>
+                  <p className="text-xs text-ctp-overlay1">Latest at the top</p>
+                </div>
                 <button
                   onClick={onClose}
-                  className="text-ctp-overlay1 transition-colors hover:text-ctp-text"
+                  aria-label="Close game log"
+                  className="min-h-11 rounded-xl px-3 text-xs text-ctp-overlay1 transition-colors hover:bg-ctp-surface0 hover:text-ctp-text"
                 >
-                  <X className="h-4 w-4" />
+                  Close
                 </button>
               </div>
 
@@ -1050,52 +1028,23 @@ function GameLogSidebar({
                 {adaptation && (
                   <div className="mb-3 rounded-lg border border-ctp-lavender/30 bg-ctp-surface1/60 p-2.5 text-left">
                     <div className="flex items-center justify-between pb-1.5 border-b border-ctp-surface2/40">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-ctp-lavender">
-                        AI Mental Model
+                      <span className="text-xs font-semibold uppercase tracking-wider text-ctp-lavender">
+                        Session memory
                       </span>
-                      {adaptation.model_loaded && (
-                        <span className="rounded bg-ctp-green/20 px-1 py-0.5 text-[9px] font-medium text-ctp-green">
-                          S3 Memory
-                        </span>
-                      )}
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
-                      <div>
-                        <span className="text-[10px] text-ctp-overlay0 block">Estimated Bluff</span>
-                        <span className="font-semibold text-ctp-peach">
-                          {(adaptation.estimated_bluff_rate * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-ctp-overlay0 block">Estimated Call</span>
-                        <span className="font-semibold text-ctp-teal">
-                          {(adaptation.estimated_call_frequency * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                    {adaptation.inferred_archetype && (
-                      <div className="mt-1.5 pt-1.5 border-t border-ctp-surface2/30 flex items-center justify-between text-[10px]">
-                        <span className="text-ctp-overlay0">Archetype:</span>
-                        <span className="font-medium text-ctp-lavender">
-                          {adaptation.inferred_archetype} ({((adaptation.archetype_confidence || 0) * 100).toFixed(0)}%)
-                        </span>
-                      </div>
-                    )}
-                    <div className="mt-1.5 text-[10px] text-ctp-overlay1">
-                      Learned from {adaptation.actions_observed} action{adaptation.actions_observed !== 1 ? "s" : ""}
-                    </div>
+                    <p className="mt-2 text-xs text-ctp-subtext0">{guestStatusText(adaptation)}</p>
                   </div>
                 )}
 
                 <div className="space-y-3">
                   {logs.map((entry, i) => (
                     <div key={i}>
-                      <span className="block text-[10px] text-ctp-overlay0">
+                      <span className="block text-xs text-ctp-subtext0">
                         {entry.time}
                       </span>
                       <p
                         className={[
-                          "text-[12px] leading-snug",
+                          "text-sm leading-5",
                           entry.kind === "bluff"
                             ? "font-semibold text-ctp-red"
                             : entry.kind === "honest"
@@ -1123,26 +1072,15 @@ function GameLogSidebar({
 // Page
 // ---------------------------------------------------------------------------
 
-// Reports the Clerk identity WITHOUT suspending the page tree: while Clerk
-// is still loading (or unreachable, e.g. blocked identity domain), this
-// renders null and callers fall back to the device UUID. When Clerk
-// resolves, rooms created afterwards upgrade to the Clerk id.
-function ClerkIdentity({ onId }: { onId: (id: string | null) => void }) {
-  const { user } = useUser();
-  const id = user?.id ?? null;
-  useEffect(() => {
-    onId(id);
-  }, [id, onId]);
-  return null;
+export default function GamePage() {
+  return <GameSession />;
 }
 
-export default function GamePage() {
+function GameSession() {
   const router = useRouter();
   const sounds = useGameSounds();
-  const [clerkUserId, setClerkUserId] = useState<string | null>(null);
 
-  const [username, setUsername] = useState<string | null>(null);
-  const [checking, setChecking] = useState(true);
+  const username = "You";
 
   // bot selection
   const [selectedBot, setSelectedBot] = useState<string | null>(null);
@@ -1155,35 +1093,50 @@ export default function GamePage() {
   const [selectorRank, setSelectorRank] = useState<Rank | null>(null);
   const [botCards, setBotCards] = useState(14);
   const [round, setRound] = useState(1);
+  const [activeRank, setActiveRank] = useState<Rank | null>(null);
   const [pileCount, setPileCount] = useState(0);
   const [deckCount, setDeckCount] = useState(24); // HOTFIX Tess 2026-09-11: was 28, actual is 24 (52-14*2); WS corrects it anyway
   const [claimedRank, setClaimedRank] = useState<Rank>("7");
-  const [claimedBy, setClaimedBy] = useState<"You" | "Bot">("You");
-  const [playedCount, setPlayedCount] = useState(1);
+  const [claimedBy, setClaimedBy] = useState<"You" | "Bot" | null>(null);
+  const [playedCount, setPlayedCount] = useState(0);
   const [canCallBluff, setCanCallBluff] = useState(false);
+  const [canPlay, setCanPlay] = useState(false);
   const [canPass, setCanPass] = useState(false);
+  const [movePending, setMovePending] = useState(false);
   const [adaptation, setAdaptation] = useState<BotAdaptation | null>(null);
 
   const [logOpen, setLogOpen] = useState(false);
   const [logCollapsed, setLogCollapsed] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [historyId, setHistoryId] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [gameOver, setGameOver] = useState<GameOverResult | null>(null);
 
-
-  // ── auth check ──
   useEffect(() => {
-    const name = localStorage.getItem("bluff-username");
-    if (!name) {
-      router.replace("/");
-    } else {
-      setUsername(name);
-      setChecking(false);
+    if (!historyId) return;
+    try {
+      localStorage.setItem(`${LOCAL_HISTORY_PREFIX}${historyId}`, JSON.stringify({
+        saved_at: Date.now(),
+        entries: logs.slice(0, 200),
+      }));
+      const histories: { key: string; savedAt: number }[] = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (!key?.startsWith(LOCAL_HISTORY_PREFIX)) continue;
+        const stored: unknown = JSON.parse(localStorage.getItem(key) || "null");
+        const savedAt = typeof stored === "object" && stored !== null && "saved_at" in stored && typeof stored.saved_at === "number" ? stored.saved_at : 0;
+        histories.push({ key, savedAt });
+      }
+      histories.sort((a, b) => b.savedAt - a.savedAt);
+      for (const old of histories.slice(20)) localStorage.removeItem(old.key);
+    } catch {
+      // Local public history is best effort; gameplay does not depend on it.
     }
-  }, [router]);
+  }, [historyId, logs]);
 
 
   // ── handlers ──
@@ -1199,21 +1152,24 @@ export default function GamePage() {
 
   const handlePlayClick = useCallback(() => {
     if (selected.size === 0) return;
+    setSelectorRank(activeRank);
     setShowSelector(true);
-  }, [selected.size]);
+  }, [selected.size, activeRank]);
 
   const handleConfirmPlay = useCallback(() => {
-    if (!selectorRank) return;
+    const rank = activeRank ?? selectorRank;
+    if (!rank || !canPlay || movePending) return;
 
     const selectedIndices = Array.from(selected);
 
-    if (ws && connected) {
+    if (ws && connected && ws.readyState === WebSocket.OPEN) {
+      setMovePending(true);
       sounds.play();
       ws.send(
         JSON.stringify({
           action: "play",
           cards: selectedIndices,
-          rank: selectorRank,
+          rank,
         })
       );
     }
@@ -1221,7 +1177,7 @@ export default function GamePage() {
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [selectorRank, selected, ws, connected, sounds]);
+  }, [activeRank, selectorRank, selected, ws, connected, sounds, canPlay, movePending]);
 
   const handleCancelPlay = useCallback(() => {
     setShowSelector(false);
@@ -1229,30 +1185,57 @@ export default function GamePage() {
   }, []);
 
   const handleCallBluff = useCallback(() => {
-    if (ws && connected) {
+    if (!canCallBluff || movePending) return;
+    if (ws && connected && ws.readyState === WebSocket.OPEN) {
+      setMovePending(true);
       sounds.callBluff();
       ws.send(JSON.stringify({ action: "call_bluff" }));
     }
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [ws, connected, sounds]);
+  }, [ws, connected, sounds, canCallBluff, movePending]);
 
   const handlePass = useCallback(() => {
-    if (ws && connected) {
+    if (!canPass || movePending) return;
+    if (ws && connected && ws.readyState === WebSocket.OPEN) {
+      setMovePending(true);
       sounds.pass();
       ws.send(JSON.stringify({ action: "pass" }));
     }
     setSelected(new Set());
     setShowSelector(false);
     setSelectorRank(null);
-  }, [ws, connected, sounds]);
+  }, [ws, connected, sounds, canPass, movePending]);
 
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem("bluff-username");
     router.push("/");
   }, [router]);
+
+  const handleOpenPrivacy = useCallback(() => {
+    setPrivacyOpen(true);
+  }, []);
+
+  const handleProfileRevoked = useCallback(() => {
+    try {
+      const localHistoryKeys: string[] = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith(LOCAL_HISTORY_PREFIX)) localHistoryKeys.push(key);
+      }
+      for (const key of localHistoryKeys) localStorage.removeItem(key);
+    } catch {
+      // Server data deletion remains complete if browser storage is unavailable.
+    }
+    setHistoryId("");
+    setLogs([]);
+    setAdaptation((previous) => ({
+      ...previous, profile_status: "not_consented",
+      persistent_profiles_available: false, research_logging: false,
+      log_status: "not_consented", scope: "room_only",
+    }));
+  }, []);
 
   const handleBotSelect = useCallback((botId: string) => {
     setSelectedBot(botId);
@@ -1260,7 +1243,22 @@ export default function GamePage() {
   }, []);
 
   const handlePlayAgain = useCallback(() => {
-    // Close the overlay and close the current socket — re-selecting bot triggers a fresh connection
+    setMovePending(false);
+    // A rematch keeps the room's behavioral memory, not its old card beliefs.
+    if (ws && connected && ws.readyState === WebSocket.OPEN) {
+      setHistoryId(createHistoryId());
+      setLogs([]);
+      setGameOver(null);
+      setSelected(new Set());
+      setShowSelector(false);
+      setSelectorRank(null);
+      setCanPlay(false);
+      setCanCallBluff(false);
+      setCanPass(false);
+      ws.send(JSON.stringify({ action: "new_game" }));
+      return;
+    }
+    // A disconnected room cannot be resumed; select a fresh opponent instead.
     setGameOver(null);
     if (ws) ws.close();
     setWs(null);
@@ -1268,16 +1266,21 @@ export default function GamePage() {
     setBotSelected(false);
     setSelectedBot(null);
     setHand([]);
+    setHistoryId("");
     setSelected(new Set());
     setLogs([]);
     setAdaptation(null);
     setPileCount(0);
-    setDeckCount(28);
+    setClaimedBy(null);
+    setActiveRank(null);
+    setPlayedCount(0);
+    setDeckCount(24);
     setRound(1);
     setBotCards(14);
     setCanCallBluff(false);
+    setCanPlay(false);
     setCanPass(false);
-  }, [ws]);
+  }, [ws, connected]);
 
   // ── Connect to WebSocket after bot selected ──
   useEffect(() => {
@@ -1286,31 +1289,22 @@ export default function GamePage() {
     let socket: WebSocket | null = null;
     let isMounted = true;
 
-    const getStableUserId = () => {
-      if (clerkUserId) return clerkUserId;
-      if (typeof window === "undefined") return "";
-      let localId = localStorage.getItem("bluff_device_id");
-      if (!localId) {
-        localId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `anon_${Date.now()}_${Math.random()}`;
-        localStorage.setItem("bluff_device_id", localId);
-      }
-      return localId;
-    };
-
     async function initWs() {
       try {
-        const stableId = getStableUserId();
-        const queryParam = stableId ? `&user_id=${encodeURIComponent(stableId)}` : "";
-        const wsParam = stableId ? `?user_id=${encodeURIComponent(stableId)}` : "";
-        const res = await fetch(`${API_URL}/rooms?bot_name=${selectedBot}${queryParam}`, {
+        const res = await fetch(`${API_URL}/rooms?bot_name=${selectedBot}`, {
           method: "POST",
+          credentials: "include",
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(payload?.detail || `Room creation failed (${res.status})`);
+        }
         const data = await res.json();
+        if (!isMounted) return;
         const roomId = data.room_id;
         if (!roomId) return;
-
-        socket = new WebSocket(`${WS_URL}/ws/${roomId}${wsParam}`);
+        setHistoryId(createHistoryId());
+        socket = new WebSocket(getWebSocketUrl(`/ws/${roomId}`));
 
         socket.onopen = () => {
           if (!isMounted) return;
@@ -1318,7 +1312,7 @@ export default function GamePage() {
           setWs(socket);
           const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           setLogs((prev) => [
-            { time: now, text: `Connected — playing ${selectedBot}`, kind: "normal" },
+            { time: now, text: `Connected. Playing ${selectedBot}.`, kind: "normal" },
             ...prev,
           ]);
         };
@@ -1330,6 +1324,8 @@ export default function GamePage() {
             const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
             if (payload.type === "game_state") {
+              setMovePending(false);
+              setCanPlay(payload.can_play === true);
               if (payload.hand) {
                 setHand(
                   payload.hand.map((c: { suit: Suit; rank: Rank }) => ({
@@ -1347,9 +1343,14 @@ export default function GamePage() {
               if (payload.draw_pile_size !== undefined) {
                 setDeckCount(payload.draw_pile_size);
               }
-              if (payload.turn !== undefined) {
-                setRound(payload.turn);
+              if (payload.round_number !== undefined) {
+                setRound(payload.round_number);
               }
+              const nextActiveRank = RANKS.includes(payload.active_rank as Rank)
+                ? payload.active_rank as Rank
+                : null;
+              setActiveRank(nextActiveRank);
+              setSelectorRank(nextActiveRank);
               if (payload.can_call_bluff !== undefined) {
                 setCanCallBluff(payload.can_call_bluff);
               }
@@ -1360,7 +1361,27 @@ export default function GamePage() {
                 const la = payload.last_action;
                 setClaimedRank(la.claimed_rank || "7");
                 setClaimedBy(la.player === 0 ? "You" : "Bot");
-                setPlayedCount(la.cards?.length || 1);
+                // `cards` is populated only once a challenge reveals the play
+                // (game-rules.md §5); the played count is always public, so the
+                // server sends it separately.
+                setPlayedCount(
+                  la.cards_played_count ?? (la.cards?.length || 1)
+                );
+              } else {
+                setClaimedBy(null);
+                setPlayedCount(0);
+              }
+              if (payload.resolution_action?.revealed) {
+                const resolved = payload.resolution_action;
+                const cards = Array.isArray(resolved.cards)
+                  ? resolved.cards.map((card: CardData) => `${card.rank}${card.suit}`).join(", ")
+                  : "";
+                const outcome = resolved.was_bluff ? "was a bluff" : "was truthful";
+                setLogs((prev) => [{
+                  time: now,
+                  text: `Revealed ${resolved.player === 0 ? "your" : "bot's"} ${resolved.cards_played_count}-card ${resolved.claimed_rank} packet (${outcome})${cards ? `: ${cards}` : ""}.`,
+                  kind: resolved.was_bluff ? "bluff" : "honest",
+                }, ...prev]);
               }
               if (payload.bot_adaptation) {
                 setAdaptation(payload.bot_adaptation);
@@ -1385,6 +1406,13 @@ export default function GamePage() {
                 ]);
               }
             } else if (payload.type === "game_over") {
+              setMovePending(false);
+              setCanPlay(false);
+              setActiveRank(null);
+              setCanCallBluff(false);
+              setCanPass(false);
+              // Display storage outcomes reported by the server, not estimates.
+              setAdaptation(payload.bot_adaptation ?? null);
               const isDraw = Boolean(payload.draw);
               const humanWon = Boolean(payload.human_won);
               const logKind: LogEntry["kind"] = isDraw ? "draw" : humanWon ? "honest" : "bluff";
@@ -1395,7 +1423,7 @@ export default function GamePage() {
               setLogs((prev) => [
                 {
                   time: now,
-                  text: payload.message || (isDraw ? "Draw — 100-turn limit reached." : humanWon ? "You won!" : "Bot wins!"),
+                  text: payload.message || (humanWon ? "You won!" : "Bot wins!"),
                   kind: logKind,
                 },
                 ...prev,
@@ -1403,11 +1431,11 @@ export default function GamePage() {
               setGameOver({
                 humanWon,
                 isDraw,
-                message: payload.message || (isDraw ? "100-turn draw — no cards eliminated." : humanWon ? "You emptied your hand first!" : "Bot emptied its hand first."),
-                adaptation,
+                message: payload.message || (humanWon ? "You emptied your hand first!" : "Bot emptied its hand first."),
               });
 
             } else if (payload.type === "error") {
+              setMovePending(false);
               setLogs((prev) => [
                 { time: now, text: `Error: ${payload.message}`, kind: "bluff" },
                 ...prev,
@@ -1423,8 +1451,14 @@ export default function GamePage() {
           setConnected(false);
           setWs(null);
         };
-      } catch {
-        // Backend offline
+      } catch (error) {
+        if (!isMounted) return;
+        const message = error instanceof Error ? error.message : "Backend offline";
+        const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setLogs((prev) => [
+          { time: now, text: message, kind: "bluff" },
+          ...prev,
+        ]);
       }
     }
 
@@ -1434,65 +1468,40 @@ export default function GamePage() {
       isMounted = false;
       if (socket) socket.close();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [botSelected, selectedBot]);
 
   // ── loading ──
-  if (checking) {
-    return (
-      // HOTFIX by Tess 2026-09-10: two sibling JSX roots (Suspense + div) made
-      // the module unparseable ("Expected ',', got 'ident'" @1246) — wrapped in
-      // a fragment. Owner (Muse/Antigravity) review requested on AGENT_CHAT.
-      <>
-        <Suspense fallback={null}>
-          <ClerkIdentity onId={setClerkUserId} />
-        </Suspense>
-        <div className="flex h-screen items-center justify-center bg-ctp-base">
-          <motion.p
-            className="text-[14px] text-ctp-subtext0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: [0.4, 1, 0.4] }}
-            transition={{ duration: 1.6, repeat: Infinity }}
-          >
-            Loading…
-          </motion.p>
-        </div>
-      </>
-    );
-  }
-
   // ── bot selection screen ──
   if (!botSelected) {
     return (
       <>
-        <Suspense fallback={null}>
-          <ClerkIdentity onId={setClerkUserId} />
-        </Suspense>
-        <GameLayout username={username || ""} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)} showNav={true}>
-          <div className="relative z-10 flex flex-1 items-center justify-center">
+        <GameLayout username={username} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)} onOpenPrivacy={handleOpenPrivacy} showNav={true}>
+          <main id="main-content" className="relative z-10 min-h-0 flex-1 overflow-y-auto">
             <BotSelector onSelect={handleBotSelect} />
-          </div>
+          </main>
           <RulesModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
         </GameLayout>
+        <ProfileMemorySettings open={privacyOpen} onClose={() => setPrivacyOpen(false)} apiUrl={API_URL} onRevoked={handleProfileRevoked} />
       </>
     );
   }
 
   return (
     <>
-      <Suspense fallback={null}>
-        <ClerkIdentity onId={setClerkUserId} />
-      </Suspense>
-      <GameLayout username={username || ""} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)}>
+      <GameLayout username={username} onLogout={handleLogout} onOpenRules={() => setRulesOpen(true)} onOpenPrivacy={handleOpenPrivacy}>
 
+      <main id="main-content" className="relative z-10 flex min-h-0 flex-1 flex-col">
+      <h1 className="sr-only">Bluff game</h1>
       <div className="flex flex-1 min-h-0 w-full overflow-hidden">
         {/* ── main game area ── */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {/* opponent — top */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+          {/* opponent - top */}
           <div className="shrink-0">
-            <OpponentArea cardCount={botCards} botName={BOT_OPTIONS.find(b => b.id === selectedBot)?.bot || "Bot"} lastBy={claimedBy} lastCount={playedCount} lastRank={claimedRank} />
+            <OpponentArea cardCount={botCards} botName={BOT_OPTIONS.find(b => b.id === selectedBot)?.name || "Opponent"} botRole={BOT_OPTIONS.find(b => b.id === selectedBot)?.role || "Baseline"} lastBy={claimedBy ?? undefined} lastCount={playedCount} lastRank={claimedRank} />
           </div>
 
-          {/* center table — middle */}
+          {/* center table - middle */}
           <CenterTable
             round={round}
             playerCount={hand.length}
@@ -1502,9 +1511,10 @@ export default function GamePage() {
             claimedBy={claimedBy}
             playedCount={playedCount}
             discardCount={pileCount}
+            turnLabel={gameOver ? "Game over" : !connected ? "Connecting..." : movePending ? "Submitting your move..." : canPlay ? (activeRank ? "Your turn: play, call bluff, or pass" : "Your turn: play cards and choose a rank") : `${BOT_OPTIONS.find(b => b.id === selectedBot)?.name || "Bot"}'s turn`}
           />
 
-          {/* player hand — bottom */}
+          {/* player hand - bottom */}
           <div className="shrink-0">
             <PlayerHand
               hand={hand}
@@ -1518,8 +1528,10 @@ export default function GamePage() {
               onCancelPlay={handleCancelPlay}
               onCallBluff={handleCallBluff}
               onPass={handlePass}
-              canPass={canPass}
-              canCallBluff={canCallBluff}
+              canPlay={connected && !movePending && canPlay}
+              canPass={connected && !movePending && canPass}
+              canCallBluff={connected && !movePending && canCallBluff}
+              activeRank={activeRank}
             />
           </div>
         </div>
@@ -1528,7 +1540,6 @@ export default function GamePage() {
         <GameLogSidebar
           open={logOpen}
           collapsed={logCollapsed}
-          onToggleCollapse={() => setLogCollapsed(!logCollapsed)}
           onClose={() => setLogCollapsed(true)}
           logs={logs}
           adaptation={adaptation}
@@ -1542,26 +1553,28 @@ export default function GamePage() {
       {/* Desktop: toggle sidebar */}
       <button
         onClick={() => setLogCollapsed(!logCollapsed)}
-        className="fixed bottom-4 right-4 z-40 hidden md:flex h-10 w-10 items-center justify-center rounded-full border border-ctp-surface1/60 bg-ctp-crust/80 text-ctp-overlay1 shadow-lg backdrop-blur-sm transition-colors hover:border-ctp-overlay1 hover:text-ctp-text"
+        className="fixed bottom-4 right-4 z-40 hidden min-h-11 items-center justify-center rounded-full border border-ctp-surface1/60 bg-ctp-crust/90 px-4 text-xs text-ctp-subtext0 shadow-lg backdrop-blur-sm transition-colors hover:border-ctp-overlay1 hover:text-ctp-text md:flex"
         aria-label="Toggle game log"
       >
-        <ScrollText className="h-4 w-4" />
+        Game log
       </button>
       {/* Mobile: open overlay */}
       <button
         onClick={() => setLogOpen(true)}
-        className="fixed bottom-4 right-4 z-40 flex md:hidden h-10 w-10 items-center justify-center rounded-full border border-ctp-surface1/60 bg-ctp-crust/80 text-ctp-overlay1 shadow-lg backdrop-blur-sm transition-colors hover:border-ctp-overlay1 hover:text-ctp-text"
+        className="fixed bottom-4 right-4 z-40 flex min-h-11 items-center justify-center rounded-full border border-ctp-surface1/60 bg-ctp-crust/90 px-4 text-xs text-ctp-subtext0 shadow-lg backdrop-blur-sm transition-colors hover:border-ctp-overlay1 hover:text-ctp-text md:hidden"
         aria-label="Open game log"
       >
-        <ScrollText className="h-4 w-4" />
+        Game log
       </button>
       {/* ── Game Over Overlay ── */}
       <AnimatePresence>
         {gameOver && (
-          <GameOverOverlay result={gameOver} onPlayAgain={handlePlayAgain} />
+          <GameOverOverlay result={gameOver} adaptation={adaptation} onPlayAgain={handlePlayAgain} />
         )}
       </AnimatePresence>
-    </GameLayout>
+      </main>
+      </GameLayout>
+      <ProfileMemorySettings open={privacyOpen} onClose={() => setPrivacyOpen(false)} apiUrl={API_URL} onRevoked={handleProfileRevoked} />
     </>
   );
 }

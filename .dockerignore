@@ -1,0 +1,16 @@
+.git
+.env*
+**/.env*
+**/.clerk
+.venv
+**/node_modules
+**/.next
+**/out
+**/__pycache__
+.pytest_cache
+data
+saved_models
+nn/checkpoints/*
+!nn/checkpoints/bc_warmstart.pt
+!nn/checkpoints/bluff_head_human.pt
+!nn/checkpoints/release.json
